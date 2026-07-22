@@ -1,9 +1,13 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 #include <iostream>
 #include <unistd.h>
 
+// ============================================================================
+// Constants and Structures
+// ============================================================================
 enum role {
     ROLE_UNSET = -1,
     ROLE_PRODUCER,
@@ -25,6 +29,31 @@ struct config {
     enum engine engine   = ENGINE_UNSET;
     const char *dir      = ".";
 };
+
+static const uint64_t OFFSET_BASIS = 0xcbf29ce484222325ULL;
+static const uint64_t FNV_PRIME = 0x100000001b3ULL;
+
+// ============================================================================
+// Functions
+// ============================================================================
+
+static uint64_t fnv1a(uint64_t hash, const void *data, size_t len)
+{
+    const unsigned char *p = static_cast<const unsigned char *>(data);
+    for (size_t i = 0; i < len; ++i) { // FNV-1a hash algorithm
+        hash ^= p[i];
+        hash *= FNV_PRIME;
+    }
+    return hash;
+}
+
+static void fill_pattern(unsigned char *buf, size_t len, int file_idx, long long offset)
+{
+    for (size_t i = 0; i < len; ++i) {
+        long long pos = offset + static_cast<long long>(i);   // Absolute position in the file
+        buf[i] = static_cast<unsigned char>(pos * 31 + file_idx * 131 + 7);
+    }
+}
 
 [[noreturn]] static void usage(const char *prog_name, int status)
 {
@@ -152,6 +181,9 @@ static void parse_args(int argc, char **argv, struct config *config)
     }
 }
 
+// ============================================================================
+// Main
+// ============================================================================
 int main(int argc, char **argv)
 {
     struct config config;
@@ -167,3 +199,4 @@ int main(int argc, char **argv)
 
     return EXIT_SUCCESS;
 }
+// ============================================================================
