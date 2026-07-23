@@ -1,5 +1,7 @@
+#include <cerrno>
 #include <charconv>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -165,6 +167,54 @@ static void parse_args(int argc, char **argv, Config *cfg)
     if (cfg->chunk_size > cfg->file_size)
         die("CHUNK_SIZE (" + std::to_string(cfg->chunk_size) +
             ") cannot be greater than FILE_SIZE (" + std::to_string(cfg->file_size) + ")");
+}
+
+static std::string file_path(const char *dir, int idx)
+{
+    char name[32];
+    snprintf(name, sizeof(name), "/file_%04d.dat", idx);
+    return std::string(dir) + name;
+}
+
+static bool write_all(int fd, const unsigned char *buf, size_t len)
+{
+    size_t done = 0;
+
+    while (done < len) {
+        ssize_t n = write(fd, buf + done, len - done);
+
+        if (n < 0) {
+            if (errno == EINTR)   // interrupted by a signal: retry
+                continue;
+            return false;
+        }
+
+        done += static_cast<size_t>(n);
+    }
+
+    return true;
+}
+
+static bool read_all(int fd, unsigned char *buf, size_t len)
+{
+    size_t done = 0;
+
+    while (done < len) {
+        ssize_t n = read(fd, buf + done, len - done);
+
+        if (n < 0) {
+            if (errno == EINTR)   // interrupted by a signal: retry
+                continue;
+            return false;
+        }
+
+        if (n == 0)   // unexpected EOF
+            return false;
+
+        done += static_cast<size_t>(n);
+    }
+
+    return true;
 }
 
 int main(int argc, char **argv)
