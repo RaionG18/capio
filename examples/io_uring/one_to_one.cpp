@@ -1,11 +1,14 @@
+#include <algorithm>
 #include <cerrno>
 #include <charconv>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <iostream>
 #include <string>
+#include <vector>
 #include <unistd.h>
 
 enum Role {
@@ -217,6 +220,71 @@ static bool read_all(int fd, unsigned char *buf, size_t len)
     return true;
 }
 
+// Writes file `idx` filled with the deterministic pattern and returns its
+// FNV-1a checksum. Aborts on any I/O error (it knows the path, so it can report
+// which file failed and why).
+static uint64_t posix_write_file(const Config &cfg, int idx)
+{
+    const std::string path = file_path(cfg.dir, idx);
+
+    int fd = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0)
+        die("cannot create " + path + ": " + strerror(errno));
+
+    std::vector<unsigned char> buf(cfg.chunk_size);
+    uint64_t checksum = OFFSET_BASIS;
+
+    for (long long offset = 0; offset < cfg.file_size; offset += cfg.chunk_size) {
+        const size_t n = std::min(cfg.chunk_size, cfg.file_size - offset);
+
+        fill_pattern(buf.data(), n, idx, offset);
+        checksum = fnv1a(checksum, buf.data(), n);
+
+        if (!write_all(fd, buf.data(), n)) {
+            close(fd);
+            die("write failed on " + path + ": " + strerror(errno));
+        }
+    }
+
+    close(fd);
+    return checksum;
+}
+
+// Reads file `idx` back and verifies it independently of the producer: it
+// regenerates the expected content from the same pattern and compares
+// checksums. A file that cannot be opened is a broken pipeline -> die(); wrong
+// content or a short (truncated) file is a verification failure -> false.
+static bool posix_read_file(const Config &cfg, int idx)
+{
+    const std::string path = file_path(cfg.dir, idx);
+
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0)
+        die("cannot open " + path + ": " + strerror(errno));
+
+    std::vector<unsigned char> got(cfg.chunk_size);
+    std::vector<unsigned char> want(cfg.chunk_size);
+    uint64_t got_sum = OFFSET_BASIS;
+    uint64_t want_sum = OFFSET_BASIS;
+    bool complete = true;
+
+    for (long long offset = 0; offset < cfg.file_size; offset += cfg.chunk_size) {
+        const size_t n = std::min(cfg.chunk_size, cfg.file_size - offset);
+
+        if (!read_all(fd, got.data(), n)) {   // short file: verification fails
+            complete = false;
+            break;
+        }
+
+        fill_pattern(want.data(), n, idx, offset);
+        got_sum  = fnv1a(got_sum,  got.data(),  n);
+        want_sum = fnv1a(want_sum, want.data(), n);
+    }
+
+    close(fd);
+    return complete && got_sum == want_sum;
+}
+
 int main(int argc, char **argv)
 {
     Config cfg;
@@ -224,13 +292,20 @@ int main(int argc, char **argv)
     prog_name = argv[0];
     parse_args(argc, argv, &cfg);
 
-    std::cout << "role=" << (cfg.role == ROLE_PRODUCER ? "producer" : "consumer")
-              << " engine=" << (cfg.engine == ENGINE_POSIX ? "posix" : "io_uring")
-              << " n_files=" << cfg.n_files
-              << " file_size=" << cfg.file_size
-              << " chunk=" << cfg.chunk_size
-              << " queue_depth=" << cfg.queue_depth
-              << " dir=" << cfg.dir << "\n";
+    // Only the POSIX engine exists so far; the io_uring branch lands with it.
+    if (cfg.role == ROLE_PRODUCER) {
+        for (int idx = 0; idx < cfg.n_files; ++idx) {
+            uint64_t checksum = posix_write_file(cfg, idx);
+            std::cout << file_path(cfg.dir, idx) << " " << std::hex << checksum << std::dec << "\n";
+        }
+        return EXIT_SUCCESS;
+    }
 
-    return EXIT_SUCCESS;
+    int verified = 0;
+    for (int idx = 0; idx < cfg.n_files; ++idx)
+        if (posix_read_file(cfg, idx))
+            ++verified;
+
+    std::cout << "verified " << verified << "/" << cfg.n_files << " files OK\n";
+    return verified == cfg.n_files ? EXIT_SUCCESS : EXIT_FAILURE;
 }
