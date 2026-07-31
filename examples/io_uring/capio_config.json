@@ -1,0 +1,22 @@
+{
+    "name": "io_uring_example",
+    "IO_Graph": [
+        {
+            "name": "producer",
+            "input_stream": [],
+            "output_stream": ["file_*.dat"],
+            "streaming": [
+                {
+                    "name": ["file_*.dat"],
+                    "committed": "on_close",
+                    "mode": "no_update"
+                }
+            ]
+        },
+        {
+            "name": "consumer",
+            "input_stream": ["file_*.dat"],
+            "output_stream": []
+        }
+    ]
+}
