@@ -38,8 +38,8 @@ done
 common=(-n "$n" -f "$fsize" -c "$chunk" -q "$q")
 bytes=$(( n * fsize ))
 
-median() {  # median of stdin numbers
-    sort -n | awk '{a[NR]=$1} END{ if(NR==0){print 0} else if(NR%2){print a[(NR+1)/2]} else {print (a[NR/2]+a[NR/2+1])/2} }'
+median() {  # median of stdin numbers; 0 if there are none (e.g. failed runs)
+    sort -n | awk '$1!=""{a[++m]=$1} END{ if(m==0){print 0} else if(m%2){print a[(m+1)/2]} else {print (a[m/2]+a[m/2+1])/2} }'
 }
 mbps_of() { grep -o 'MBps=[0-9.]*' | cut -d= -f2; }   # pull the metric from a run
 
@@ -69,7 +69,7 @@ run_plain() {
     done
     pm=$(printf '%s\n' "${prods[@]}" | median)
     cm=$(printf '%s\n' "${conss[@]}" | median)
-    echo "$pm $cm $ok"
+    echo "$pm|$cm|$ok|"
 }
 
 # run_capio <engine> -> same, but under the CAPIO server. io_uring is expected
@@ -111,7 +111,7 @@ run_capio() {
     cm=$(printf '%s\n' "${conss[@]}" | median)
     # Emit a reason only on failure; on success the field stays empty.
     [ "$ok" = 1 ] && reason=""
-    echo "$pm $cm $ok $reason"
+    echo "$pm|$cm|$ok|$reason"
 }
 
 printf '\nio_uring example benchmark\n'
@@ -123,8 +123,7 @@ printf '%s\n' "-----------------------------------------------------------------
 
 report() {  # report <label> <engine> <layer> <"pm cm ok [reason...]">
     local label="$1" engine="$2" layer="$3" pm cm ok reason
-    read -r pm cm ok reason <<<"$4"
-    reason="${reason//_/ }"
+    IFS='|' read -r pm cm ok reason <<<"$4"
     local vtxt; [ "$ok" = 1 ] && vtxt="yes" || vtxt="NO — ${reason:-not intercepted}"
     printf '%-14s %-9s %12.1f %12.1f   %s\n' "$label" "$engine" "$pm" "$cm" "$vtxt"
     echo "$label,$engine,$layer,$pm,$cm,$ok,\"${reason}\"" >> "$csv"
