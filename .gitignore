@@ -51,3 +51,4 @@ build
 .capio_tokens
 
 cmake_test_discovery*.json
+examples/io_uring/bench_results.csv
