@@ -5,8 +5,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
+#include <functional>
 #include <iostream>
+#include <liburing.h>
+#include <optional>
 #include <string>
 #include <vector>
 #include <unistd.h>
@@ -285,6 +289,231 @@ static bool posix_read_file(const Config &cfg, int idx)
     return complete && got_sum == want_sum;
 }
 
+// --- io_uring engine --------------------------------------------------------
+// Same work as the POSIX engine, but each chunk is submitted through an
+// io_uring ring instead of a direct write()/read(). This first version submits
+// one operation at a time and waits for it (queue depth 1 in effect);
+// batching up to cfg.queue_depth is a later, measurable optimization.
+
+// Submits a single prep'd SQE and returns the completion's res (bytes done, or
+// -errno). Centralizes the get_sqe -> submit_and_wait -> cqe_seen dance so the
+// write/read paths don't repeat it.
+static int uring_submit_one(io_uring &ring, int fd, void *buf, size_t len,
+                            long long offset, bool is_write)
+{
+    io_uring_sqe *sqe = io_uring_get_sqe(&ring);
+    if (!sqe)
+        die("io_uring: submission queue full");   // cannot happen at depth 1
+
+    if (is_write)
+        io_uring_prep_write(sqe, fd, buf, len, offset);
+    else
+        io_uring_prep_read(sqe, fd, buf, len, offset);
+
+    int ret = io_uring_submit_and_wait(&ring, 1);
+    if (ret < 0)
+        die(std::string("io_uring_submit_and_wait: ") + strerror(-ret));
+
+    io_uring_cqe *cqe;
+    ret = io_uring_wait_cqe(&ring, &cqe);
+    if (ret < 0)
+        die(std::string("io_uring_wait_cqe: ") + strerror(-ret));
+
+    int res = cqe->res;
+    io_uring_cqe_seen(&ring, cqe);
+    return res;
+}
+
+// Like write_all()/read_all(), but each pass goes through the ring. res < 0 is
+// -errno; res == 0 on a read means EOF; a short res means retry the remainder.
+static bool uring_rw_all(io_uring &ring, int fd, unsigned char *buf, size_t len,
+                         long long offset, bool is_write)
+{
+    size_t done = 0;
+
+    while (done < len) {
+        int res = uring_submit_one(ring, fd, buf + done, len - done,
+                                   offset + static_cast<long long>(done), is_write);
+
+        if (res < 0) {
+            if (res == -EINTR)
+                continue;
+            errno = -res;
+            return false;
+        }
+
+        if (res == 0)   // unexpected EOF (read side)
+            return false;
+
+        done += static_cast<size_t>(res);
+    }
+
+    return true;
+}
+
+// Finishes a slot that did not fully complete in a batch, using the proven
+// depth-1 helper (rare for regular files: only short completions or -EINTR).
+static bool uring_finish_slot(io_uring &ring, int fd, unsigned char *buf,
+                              size_t len, long long offset, int res, bool is_write)
+{
+    const size_t done = res > 0 ? static_cast<size_t>(res) : 0;
+    if (done >= len)
+        return true;
+    return uring_rw_all(ring, fd, buf + done, len - done,
+                        offset + static_cast<long long>(done), is_write);
+}
+
+// Reaps `count` completions, matching each CQE back to its slot via user_data
+// (completions may arrive out of order), storing bytes-done into res[].
+static void uring_reap(io_uring &ring, int count, std::vector<int> &res)
+{
+    for (int r = 0; r < count; ++r) {
+        io_uring_cqe *cqe;
+        int ret = io_uring_wait_cqe(&ring, &cqe);
+        if (ret < 0)
+            die(std::string("io_uring_wait_cqe: ") + strerror(-ret));
+        res[io_uring_cqe_get_data64(cqe)] = cqe->res;
+        io_uring_cqe_seen(&ring, cqe);
+    }
+}
+
+// Owns the ring and the per-batch buffers so they are allocated once and reused
+// across every file, instead of per file — otherwise ring setup and queue_depth
+// buffer allocations would dominate a many-small-files benchmark. Buffer memory
+// is queue_depth * chunk_size.
+struct UringCtx {
+    io_uring ring;
+    std::vector<std::vector<unsigned char>> bufs;
+    std::vector<long long> off;
+    std::vector<size_t> len;
+    std::vector<int> res;
+    std::vector<unsigned char> want;
+
+    explicit UringCtx(const Config &cfg)
+        : bufs(cfg.queue_depth, std::vector<unsigned char>(cfg.chunk_size)),
+          off(cfg.queue_depth), len(cfg.queue_depth), res(cfg.queue_depth),
+          want(cfg.chunk_size)
+    {
+        if (int r = io_uring_queue_init(cfg.queue_depth, &ring, 0); r < 0)
+            die(std::string("io_uring_queue_init: ") + strerror(-r));
+    }
+    ~UringCtx() { io_uring_queue_exit(&ring); }
+};
+
+// Batches up to queue_depth chunks per submit. Buffers, checksum folding, and
+// remainder handling all proceed in offset order (batches ascend, and slots
+// within a batch ascend), so the checksum is well-defined regardless of the
+// order completions arrive in.
+static uint64_t uring_write_file(UringCtx &ctx, const Config &cfg, int idx)
+{
+    const std::string path = file_path(cfg.dir, idx);
+
+    int fd = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0)
+        die("cannot create " + path + ": " + strerror(errno));
+
+    const int depth = cfg.queue_depth;
+    uint64_t checksum = OFFSET_BASIS;
+
+    for (long long base = 0; base < cfg.file_size; base += static_cast<long long>(depth) * cfg.chunk_size) {
+        int count = 0;
+        for (int k = 0; k < depth; ++k) {
+            const long long offset = base + static_cast<long long>(k) * cfg.chunk_size;
+            if (offset >= cfg.file_size)
+                break;
+            ctx.off[k] = offset;
+            ctx.len[k] = std::min(cfg.chunk_size, cfg.file_size - offset);
+
+            fill_pattern(ctx.bufs[k].data(), ctx.len[k], idx, offset);
+            checksum = fnv1a(checksum, ctx.bufs[k].data(), ctx.len[k]);
+
+            io_uring_sqe *sqe = io_uring_get_sqe(&ctx.ring);
+            if (!sqe)
+                die("io_uring: submission queue full");
+            io_uring_prep_write(sqe, fd, ctx.bufs[k].data(), ctx.len[k], offset);
+            io_uring_sqe_set_data64(sqe, k);
+            ++count;
+        }
+
+        if (int r = io_uring_submit_and_wait(&ctx.ring, count); r < 0)
+            die(std::string("io_uring_submit_and_wait: ") + strerror(-r));
+        uring_reap(ctx.ring, count, ctx.res);
+
+        for (int k = 0; k < count; ++k)
+            if (!uring_finish_slot(ctx.ring, fd, ctx.bufs[k].data(), ctx.len[k], ctx.off[k], ctx.res[k], /*write=*/true))
+                die("io_uring write failed on " + path + ": " + strerror(errno));
+    }
+
+    close(fd);
+    return checksum;
+}
+
+static bool uring_read_file(UringCtx &ctx, const Config &cfg, int idx)
+{
+    const std::string path = file_path(cfg.dir, idx);
+
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0)
+        die("cannot open " + path + ": " + strerror(errno));
+
+    const int depth = cfg.queue_depth;
+    uint64_t got_sum = OFFSET_BASIS, want_sum = OFFSET_BASIS;
+    bool ok = true;
+
+    for (long long base = 0; ok && base < cfg.file_size; base += static_cast<long long>(depth) * cfg.chunk_size) {
+        int count = 0;
+        for (int k = 0; k < depth; ++k) {
+            const long long offset = base + static_cast<long long>(k) * cfg.chunk_size;
+            if (offset >= cfg.file_size)
+                break;
+            ctx.off[k] = offset;
+            ctx.len[k] = std::min(cfg.chunk_size, cfg.file_size - offset);
+
+            io_uring_sqe *sqe = io_uring_get_sqe(&ctx.ring);
+            if (!sqe)
+                die("io_uring: submission queue full");
+            io_uring_prep_read(sqe, fd, ctx.bufs[k].data(), ctx.len[k], offset);
+            io_uring_sqe_set_data64(sqe, k);
+            ++count;
+        }
+
+        if (int r = io_uring_submit_and_wait(&ctx.ring, count); r < 0)
+            die(std::string("io_uring_submit_and_wait: ") + strerror(-r));
+        uring_reap(ctx.ring, count, ctx.res);
+
+        // Fold in offset order; a slot that can't be completed means a short file.
+        for (int k = 0; k < count; ++k) {
+            if (!uring_finish_slot(ctx.ring, fd, ctx.bufs[k].data(), ctx.len[k], ctx.off[k], ctx.res[k], /*write=*/false)) {
+                ok = false;
+                break;
+            }
+            fill_pattern(ctx.want.data(), ctx.len[k], idx, ctx.off[k]);
+            got_sum  = fnv1a(got_sum,  ctx.bufs[k].data(), ctx.len[k]);
+            want_sum = fnv1a(want_sum, ctx.want.data(),    ctx.len[k]);
+        }
+    }
+
+    close(fd);
+    return ok && got_sum == want_sum;
+}
+
+static double now_seconds()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+// One parseable line for the benchmark harness to harvest (key=value pairs).
+static void print_metrics(const char *engine, const char *role, int files,
+                          long long bytes, double secs)
+{
+    const double mbps = secs > 0 ? bytes / 1e6 / secs : 0.0;
+    std::cout << "engine=" << engine << " role=" << role
+              << " files=" << files << " bytes=" << bytes
+              << " secs=" << secs << " MBps=" << mbps << "\n";
+}
+
 int main(int argc, char **argv)
 {
     Config cfg;
@@ -292,20 +521,46 @@ int main(int argc, char **argv)
     prog_name = argv[0];
     parse_args(argc, argv, &cfg);
 
-    // Only the POSIX engine exists so far; the io_uring branch lands with it.
+    // Select the engine once; both engines share the producer/consumer loops.
+    // The io_uring engine keeps a single ring + buffers alive across all files.
+    std::optional<UringCtx> uring_ctx;
+    std::function<uint64_t(int)> write_file;
+    std::function<bool(int)> read_file;
+
+    if (cfg.engine == ENGINE_URING) {
+        uring_ctx.emplace(cfg);
+        write_file = [&](int idx) { return uring_write_file(*uring_ctx, cfg, idx); };
+        read_file  = [&](int idx) { return uring_read_file(*uring_ctx, cfg, idx); };
+    } else {
+        write_file = [&](int idx) { return posix_write_file(cfg, idx); };
+        read_file  = [&](int idx) { return posix_read_file(cfg, idx); };
+    }
+
+    const char *engine_name = cfg.engine == ENGINE_URING ? "io_uring" : "posix";
+    const long long total_bytes = static_cast<long long>(cfg.n_files) * cfg.file_size;
+
     if (cfg.role == ROLE_PRODUCER) {
-        for (int idx = 0; idx < cfg.n_files; ++idx) {
-            uint64_t checksum = posix_write_file(cfg, idx);
-            std::cout << file_path(cfg.dir, idx) << " " << std::hex << checksum << std::dec << "\n";
-        }
+        // Time only the I/O loop; keep checksum printing out of the measured region.
+        std::vector<uint64_t> sums(cfg.n_files);
+        const double t0 = now_seconds();
+        for (int idx = 0; idx < cfg.n_files; ++idx)
+            sums[idx] = write_file(idx);
+        const double secs = now_seconds() - t0;
+
+        print_metrics(engine_name, "producer", cfg.n_files, total_bytes, secs);
+        for (int idx = 0; idx < cfg.n_files; ++idx)
+            std::cout << file_path(cfg.dir, idx) << " " << std::hex << sums[idx] << std::dec << "\n";
         return EXIT_SUCCESS;
     }
 
     int verified = 0;
+    const double t0 = now_seconds();
     for (int idx = 0; idx < cfg.n_files; ++idx)
-        if (posix_read_file(cfg, idx))
+        if (read_file(idx))
             ++verified;
+    const double secs = now_seconds() - t0;
 
+    print_metrics(engine_name, "consumer", cfg.n_files, total_bytes, secs);
     std::cout << "verified " << verified << "/" << cfg.n_files << " files OK\n";
     return verified == cfg.n_files ? EXIT_SUCCESS : EXIT_FAILURE;
 }
