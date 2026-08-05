@@ -5,18 +5,6 @@ using either plain POSIX calls or io_uring. It is a small benchmark and a
 correctness test in one binary, and it runs the same way with or without
 CAPIO.
 
-## What io_uring is, in ten lines
-
-POSIX I/O makes one system call per read or write. io_uring cuts that cost.
-The program and the kernel share two ring buffers in memory: a submission
-queue and a completion queue. To read or write, the program drops an entry
-in the submission queue and, when it wants, makes one `io_uring_enter` call
-to hand a whole batch to the kernel. The kernel does the work and posts the
-results in the completion queue, which the program reads straight from
-memory. So the data operations are not system calls at all — they are writes
-to shared memory. This example uses the `liburing` helper library to drive
-the two queues.
-
 ## What the program does
 
 The producer fills each file with a fixed, position-based pattern and prints
