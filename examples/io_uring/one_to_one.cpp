@@ -224,9 +224,7 @@ static bool read_all(int fd, unsigned char *buf, size_t len)
     return true;
 }
 
-// Writes file `idx` filled with the deterministic pattern and returns its
-// FNV-1a checksum. Aborts on any I/O error (it knows the path, so it can report
-// which file failed and why).
+// Writes file `idx` with the deterministic pattern; returns its FNV-1a checksum.
 static uint64_t posix_write_file(const Config &cfg, int idx)
 {
     const std::string path = file_path(cfg.dir, idx);
@@ -254,10 +252,9 @@ static uint64_t posix_write_file(const Config &cfg, int idx)
     return checksum;
 }
 
-// Reads file `idx` back and verifies it independently of the producer: it
-// regenerates the expected content from the same pattern and compares
-// checksums. A file that cannot be opened is a broken pipeline -> die(); wrong
-// content or a short (truncated) file is a verification failure -> false.
+// Verifies file `idx` against the pattern, regenerated here rather than shared
+// with the producer, so a match proves the bytes survived the round trip.
+// Cannot open -> die() (broken pipeline); wrong or short content -> false.
 static bool posix_read_file(const Config &cfg, int idx)
 {
     const std::string path = file_path(cfg.dir, idx);
@@ -268,103 +265,32 @@ static bool posix_read_file(const Config &cfg, int idx)
 
     std::vector<unsigned char> got(cfg.chunk_size);
     std::vector<unsigned char> want(cfg.chunk_size);
-    uint64_t got_sum = OFFSET_BASIS;
-    uint64_t want_sum = OFFSET_BASIS;
-    bool complete = true;
+    bool ok = true;
 
     for (long long offset = 0; offset < cfg.file_size; offset += cfg.chunk_size) {
         const size_t n = std::min(cfg.chunk_size, cfg.file_size - offset);
 
         if (!read_all(fd, got.data(), n)) {   // short file: verification fails
-            complete = false;
+            ok = false;
             break;
         }
 
         fill_pattern(want.data(), n, idx, offset);
-        got_sum  = fnv1a(got_sum,  got.data(),  n);
-        want_sum = fnv1a(want_sum, want.data(), n);
+        if (memcmp(got.data(), want.data(), n) != 0) {
+            ok = false;
+            break;
+        }
     }
 
     close(fd);
-    return complete && got_sum == want_sum;
+    return ok;
 }
 
 // --- io_uring engine --------------------------------------------------------
-// Same work as the POSIX engine, but each chunk is submitted through an
-// io_uring ring instead of a direct write()/read(). This first version submits
-// one operation at a time and waits for it (queue depth 1 in effect);
-// batching up to cfg.queue_depth is a later, measurable optimization.
+// Same work as the POSIX engine, but batched: up to queue_depth chunks per
+// submit instead of one write()/read() per chunk.
 
-// Submits a single prep'd SQE and returns the completion's res (bytes done, or
-// -errno). Centralizes the get_sqe -> submit_and_wait -> cqe_seen dance so the
-// write/read paths don't repeat it.
-static int uring_submit_one(io_uring &ring, int fd, void *buf, size_t len,
-                            long long offset, bool is_write)
-{
-    io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-    if (!sqe)
-        die("io_uring: submission queue full");   // cannot happen at depth 1
-
-    if (is_write)
-        io_uring_prep_write(sqe, fd, buf, len, offset);
-    else
-        io_uring_prep_read(sqe, fd, buf, len, offset);
-
-    int ret = io_uring_submit_and_wait(&ring, 1);
-    if (ret < 0)
-        die(std::string("io_uring_submit_and_wait: ") + strerror(-ret));
-
-    io_uring_cqe *cqe;
-    ret = io_uring_wait_cqe(&ring, &cqe);
-    if (ret < 0)
-        die(std::string("io_uring_wait_cqe: ") + strerror(-ret));
-
-    int res = cqe->res;
-    io_uring_cqe_seen(&ring, cqe);
-    return res;
-}
-
-// Like write_all()/read_all(), but each pass goes through the ring. res < 0 is
-// -errno; res == 0 on a read means EOF; a short res means retry the remainder.
-static bool uring_rw_all(io_uring &ring, int fd, unsigned char *buf, size_t len,
-                         long long offset, bool is_write)
-{
-    size_t done = 0;
-
-    while (done < len) {
-        int res = uring_submit_one(ring, fd, buf + done, len - done,
-                                   offset + static_cast<long long>(done), is_write);
-
-        if (res < 0) {
-            if (res == -EINTR)
-                continue;
-            errno = -res;
-            return false;
-        }
-
-        if (res == 0)   // unexpected EOF (read side)
-            return false;
-
-        done += static_cast<size_t>(res);
-    }
-
-    return true;
-}
-
-// Finishes a slot that did not fully complete in a batch, using the proven
-// depth-1 helper (rare for regular files: only short completions or -EINTR).
-static bool uring_finish_slot(io_uring &ring, int fd, unsigned char *buf,
-                              size_t len, long long offset, int res, bool is_write)
-{
-    const size_t done = res > 0 ? static_cast<size_t>(res) : 0;
-    if (done >= len)
-        return true;
-    return uring_rw_all(ring, fd, buf + done, len - done,
-                        offset + static_cast<long long>(done), is_write);
-}
-
-// Reaps `count` completions, matching each CQE back to its slot via user_data
-// (completions may arrive out of order), storing bytes-done into res[].
+// Completions may arrive out of order, so user_data carries the slot index.
 static void uring_reap(io_uring &ring, int count, std::vector<int> &res)
 {
     for (int r = 0; r < count; ++r) {
@@ -377,10 +303,8 @@ static void uring_reap(io_uring &ring, int count, std::vector<int> &res)
     }
 }
 
-// Owns the ring and the per-batch buffers so they are allocated once and reused
-// across every file, instead of per file — otherwise ring setup and queue_depth
-// buffer allocations would dominate a many-small-files benchmark. Buffer memory
-// is queue_depth * chunk_size.
+// Ring and buffers live here so they are set up once, not per file: otherwise
+// that cost dominates a many-small-files run. Memory is queue_depth * chunk_size.
 struct UringCtx {
     io_uring ring;
     std::vector<std::vector<unsigned char>> bufs;
@@ -400,10 +324,8 @@ struct UringCtx {
     ~UringCtx() { io_uring_queue_exit(&ring); }
 };
 
-// Batches up to queue_depth chunks per submit. Buffers, checksum folding, and
-// remainder handling all proceed in offset order (batches ascend, and slots
-// within a batch ascend), so the checksum is well-defined regardless of the
-// order completions arrive in.
+// The checksum is folded while filling the buffers, in offset order, so it does
+// not depend on the order completions arrive in.
 static uint64_t uring_write_file(UringCtx &ctx, const Config &cfg, int idx)
 {
     const std::string path = file_path(cfg.dir, idx);
@@ -439,9 +361,15 @@ static uint64_t uring_write_file(UringCtx &ctx, const Config &cfg, int idx)
             die(std::string("io_uring_submit_and_wait: ") + strerror(-r));
         uring_reap(ctx.ring, count, ctx.res);
 
-        for (int k = 0; k < count; ++k)
-            if (!uring_finish_slot(ctx.ring, fd, ctx.bufs[k].data(), ctx.len[k], ctx.off[k], ctx.res[k], /*write=*/true))
-                die("io_uring write failed on " + path + ": " + strerror(errno));
+        for (int k = 0; k < count; ++k) {
+            if (ctx.res[k] < 0)
+                die("io_uring write failed on " + path + ": " + strerror(-ctx.res[k]));
+
+            // Not retried: a partial write means an assumption broke, so say so.
+            if (static_cast<size_t>(ctx.res[k]) != ctx.len[k])
+                die("io_uring short write on " + path + ": " + std::to_string(ctx.res[k]) +
+                    " of " + std::to_string(ctx.len[k]) + " bytes");
+        }
     }
 
     close(fd);
@@ -457,7 +385,6 @@ static bool uring_read_file(UringCtx &ctx, const Config &cfg, int idx)
         die("cannot open " + path + ": " + strerror(errno));
 
     const int depth = cfg.queue_depth;
-    uint64_t got_sum = OFFSET_BASIS, want_sum = OFFSET_BASIS;
     bool ok = true;
 
     for (long long base = 0; ok && base < cfg.file_size; base += static_cast<long long>(depth) * cfg.chunk_size) {
@@ -481,20 +408,25 @@ static bool uring_read_file(UringCtx &ctx, const Config &cfg, int idx)
             die(std::string("io_uring_submit_and_wait: ") + strerror(-r));
         uring_reap(ctx.ring, count, ctx.res);
 
-        // Fold in offset order; a slot that can't be completed means a short file.
         for (int k = 0; k < count; ++k) {
-            if (!uring_finish_slot(ctx.ring, fd, ctx.bufs[k].data(), ctx.len[k], ctx.off[k], ctx.res[k], /*write=*/false)) {
+            if (ctx.res[k] < 0)
+                die("io_uring read failed on " + path + ": " + strerror(-ctx.res[k]));
+
+            if (static_cast<size_t>(ctx.res[k]) != ctx.len[k]) {   // truncated file
+                ok = false;   // a verification failure, not a broken pipeline
+                break;
+            }
+
+            fill_pattern(ctx.want.data(), ctx.len[k], idx, ctx.off[k]);
+            if (memcmp(ctx.bufs[k].data(), ctx.want.data(), ctx.len[k]) != 0) {
                 ok = false;
                 break;
             }
-            fill_pattern(ctx.want.data(), ctx.len[k], idx, ctx.off[k]);
-            got_sum  = fnv1a(got_sum,  ctx.bufs[k].data(), ctx.len[k]);
-            want_sum = fnv1a(want_sum, ctx.want.data(),    ctx.len[k]);
         }
     }
 
     close(fd);
-    return ok && got_sum == want_sum;
+    return ok;
 }
 
 static double now_seconds()
