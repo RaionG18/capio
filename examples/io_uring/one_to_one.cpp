@@ -309,6 +309,7 @@ struct UringCtx {
     io_uring ring;
     std::vector<std::vector<unsigned char>> bufs;
     std::vector<long long> off;
+    // Length of each buffer in bufs; the last chunk of a file may be < chunk_size.
     std::vector<size_t> len;
     std::vector<int> res;
     std::vector<unsigned char> want;
