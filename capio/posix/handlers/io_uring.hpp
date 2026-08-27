@@ -122,6 +122,32 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
 }
 #endif // SYS_io_uring_setup
 
+// Serve one SQE and produce its completion result. NOP only for F3.2; real
+// opcodes delegate to the existing capio_* handlers in F3.3.
+static int32_t uring_dispatch_sqe(const io_uring_sqe *sqe, long tid) {
+    START_LOG(tid, "call(opcode=%u, user_data=%llu)", sqe->opcode,
+              (unsigned long long) sqe->user_data);
+
+    switch (sqe->opcode) {
+    case IORING_OP_NOP:
+        return 0;
+    default:
+        LOG("opcode %u not implemented yet", sqe->opcode);
+        return -EINVAL;
+    }
+}
+
+// Post one completion into the CQ, preserving user_data (io_uring convention).
+static void uring_post_cqe(CapioRing &ring, uint64_t user_data, int32_t res) {
+    uint32_t tail = *ring.cq_tail;
+    io_uring_cqe &cqe = ring.cqes[tail & *ring.cq_mask];
+    cqe.user_data     = user_data;
+    cqe.res           = res;
+    cqe.flags         = 0;
+    // Release so the app sees the CQE fields before the advanced tail.
+    __atomic_store_n(ring.cq_tail, tail + 1, __ATOMIC_RELEASE);
+}
+
 #ifdef SYS_io_uring_enter
 int io_uring_enter_handler(long arg0, long arg1, long arg2, long arg3, long arg4, long arg5,
                            long *result) {
@@ -133,12 +159,34 @@ int io_uring_enter_handler(long arg0, long arg1, long arg2, long arg3, long arg4
     START_LOG(tid, "call(ring_fd=%d, to_submit=%u, min_complete=%u, flags=0x%x)", ring_fd,
               to_submit, min_complete, flags);
 
-    // to_submit/min_complete are the contract the emulated enter must honour.
-    LOG("io_uring_enter: ring_fd=%d to_submit=%u min_complete=%u flags=0x%x getevents=%s",
-        ring_fd, to_submit, min_complete, flags,
-        (flags & IORING_ENTER_GETEVENTS) ? "yes" : "no");
+    CapioRing *ring = get_capio_ring(ring_fd);
+    if (ring == nullptr) {
+        return CAPIO_POSIX_SYSCALL_SKIP; // not a CAPIO ring: kernel handles it
+    }
 
-    return CAPIO_POSIX_SYSCALL_SKIP;
+    // Drain to_submit SQEs. liburing has already published the sq array and tail
+    // (in CAPIO memory) inside io_uring_submit, before this syscall. Processing
+    // synchronously here is semantically valid: io_uring does not guarantee
+    // async, and the kernel itself often completes inline.
+    uint32_t head      = *ring->sq_head;
+    uint32_t submitted = 0;
+    while (submitted < to_submit) {
+        uint32_t sqe_index      = ring->sq_array[head & *ring->sq_mask];
+        const io_uring_sqe *sqe = &ring->sqes[sqe_index];
+        int32_t res             = uring_dispatch_sqe(sqe, tid);
+        uring_post_cqe(*ring, sqe->user_data, res);
+        ++head;
+        ++submitted;
+    }
+    // Publish the consumed head so the app's next get_sqe sees the free slots.
+    __atomic_store_n(ring->sq_head, head, __ATOMIC_RELEASE);
+
+    LOG("io_uring_enter: served %u SQEs synchronously (min_complete=%u)", submitted, min_complete);
+
+    // Synchronous processing means every requested completion is already posted,
+    // so enter returns the number of SQEs consumed, as the kernel would.
+    *result = submitted;
+    return CAPIO_POSIX_SYSCALL_SUCCESS;
 }
 #endif // SYS_io_uring_enter
 
