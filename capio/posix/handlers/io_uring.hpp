@@ -134,10 +134,22 @@ static void uring_seek_if_explicit(int fd, uint64_t off) {
     }
 }
 
+// A non-CAPIO fd sharing the ring: run it synchronously against the real kernel
+// and report its real result. This preserves correctness for mixed rings; the
+// MVP does not overlap these with async, which is a documented performance
+// limitation, not a correctness one. Uses the p{read,write} form so the SQE's
+// explicit offset is honoured without a separate seek.
+static int32_t uring_passthrough_rw(const io_uring_sqe *sqe, bool is_write) {
+    long syscall_no = is_write ? SYS_pwrite64 : SYS_pread64;
+    off64_t off     = (sqe->off == static_cast<uint64_t>(-1)) ? 0 : static_cast<off64_t>(sqe->off);
+    long r          = syscall_no_intercept(syscall_no, sqe->fd, sqe->addr, sqe->len, off);
+    return static_cast<int32_t>(r < 0 ? -errno : r);
+}
+
 // Serve one SQE and produce its completion result (bytes transferred, or -errno
-// as the io_uring convention). Real opcodes delegate to the existing capio_*
+// as the io_uring convention). CAPIO fds delegate to the existing capio_*
 // handlers so the data path, cache and CAPIO-CL semantics are reused, not
-// reimplemented. Only CAPIO fds are handled here; non-CAPIO fds arrive in F3.4.
+// reimplemented; non-CAPIO fds pass through to the kernel synchronously.
 static int32_t uring_dispatch_sqe(const io_uring_sqe *sqe, long tid) {
     START_LOG(tid, "call(opcode=%u, fd=%d, user_data=%llu)", sqe->opcode, sqe->fd,
               (unsigned long long) sqe->user_data);
@@ -148,23 +160,21 @@ static int32_t uring_dispatch_sqe(const io_uring_sqe *sqe, long tid) {
         // Durability is provided by CAPIO's commit rule, not fsync.
         return 0;
 
-    case IORING_OP_WRITE: {
+    case IORING_OP_WRITE:
         if (!exists_capio_fd(sqe->fd)) {
-            return -EINVAL; // non-CAPIO fd: handled in F3.4
+            return uring_passthrough_rw(sqe, true);
         }
         uring_seek_if_explicit(sqe->fd, sqe->off);
         return static_cast<int32_t>(
             capio_write(sqe->fd, reinterpret_cast<const void *>(sqe->addr), sqe->len, tid));
-    }
 
-    case IORING_OP_READ: {
+    case IORING_OP_READ:
         if (!exists_capio_fd(sqe->fd)) {
-            return -EINVAL;
+            return uring_passthrough_rw(sqe, false);
         }
         uring_seek_if_explicit(sqe->fd, sqe->off);
         return static_cast<int32_t>(
             capio_read(sqe->fd, reinterpret_cast<void *>(sqe->addr), sqe->len, tid));
-    }
 
     default:
         LOG("opcode %u not implemented yet", sqe->opcode);
