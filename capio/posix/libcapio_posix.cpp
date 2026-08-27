@@ -134,6 +134,12 @@ static constexpr long CAPIO_NR_SYSCALLS = 1 + std::max({
 #ifdef SYS_mkdirat
                                                   SYS_mkdirat,
 #endif
+#ifdef SYS_mmap
+                                                  SYS_mmap,
+#endif
+#ifdef SYS_munmap
+                                                  SYS_munmap,
+#endif
 #ifdef SYS_newfstatat
                                                   SYS_newfstatat,
 #endif
@@ -292,6 +298,12 @@ static constexpr std::array<CPHandler_t, CAPIO_NR_SYSCALLS> build_syscall_table(
 #endif
 #ifdef SYS_mkdirat
     _syscallTable[SYS_mkdirat] = mkdirat_handler;
+#endif
+#ifdef SYS_mmap
+    _syscallTable[SYS_mmap] = mmap_handler;
+#endif
+#ifdef SYS_munmap
+    _syscallTable[SYS_munmap] = munmap_handler;
 #endif
 #ifdef SYS_newfstatat
     _syscallTable[SYS_newfstatat] = fstatat_handler;

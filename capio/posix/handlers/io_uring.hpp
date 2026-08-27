@@ -7,21 +7,17 @@
 #include <linux/io_uring.h>
 
 #include "utils/common.hpp"
+#include "utils/filesystem.hpp"
+#include "utils/uring.hpp"
 
 /*
- * Tracing-only handlers for the io_uring syscalls (425-427).
+ * io_uring handlers (425-427).
  *
- * Every handler logs and then returns CAPIO_POSIX_SYSCALL_SKIP, so the call
- * proceeds to the kernel untouched: CAPIO's behaviour is unchanged while these
- * are in place. Their job is to reveal what liburing actually asks for --
- * especially the mmap offsets and the params it gets back -- before any of it
- * is emulated.
- *
- * The setup handler logs io_uring_params on the way out, which is why it is the
- * one place that needs the kernel's answer. syscall_no_intercept re-issues the
- * call without re-entering the hook, and the result is handed back through
- * *result with a return of 0, matching what the other handlers do when they
- * supply their own return value.
+ * setup builds a CAPIO-owned ring (fake fd + fabricated params) instead of the
+ * kernel's, so the SQEs the application submits never reach the kernel and can
+ * be served by CAPIO. enter and register stay log-only for now (F3.2+ turns
+ * enter into the SQ drain). The emulated mmap that backs the ring lives in
+ * mmap.hpp and keys off the fake fd registered here.
  */
 
 // Logged so the emulated setup knows which flags real workloads request.
@@ -56,6 +52,15 @@ static const char *uring_setup_flags_str(unsigned flags) {
     return buf;
 }
 
+// Next power of two >= n, for at least 1. liburing requires power-of-two entries.
+static uint32_t uring_roundup_pow2(uint32_t n) {
+    uint32_t p = 1;
+    while (p < n) {
+        p <<= 1;
+    }
+    return p;
+}
+
 #ifdef SYS_io_uring_setup
 int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4, long arg5,
                            long *result) {
@@ -64,41 +69,55 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
     long tid     = syscall_no_intercept(SYS_gettid);
     START_LOG(tid, "call(entries=%u, params=0x%08x)", entries, params);
 
-    // Requested flags, before the kernel fills in what it granted.
-    if (params != nullptr) {
-        LOG("io_uring_setup requested: entries=%u flags=0x%x [%s] sq_thread_cpu=%u "
-            "sq_thread_idle=%u",
-            entries, params->flags, uring_setup_flags_str(params->flags), params->sq_thread_cpu,
-            params->sq_thread_idle);
+    if (params == nullptr || entries == 0) {
+        errno   = EINVAL;
+        *result = -errno;
+        return CAPIO_POSIX_SYSCALL_SUCCESS;
     }
 
-    // Let the kernel actually create the ring, then report what it returned.
-    // The layout below is exactly what an emulated setup will have to fabricate.
-    long res = syscall_no_intercept(SYS_io_uring_setup, arg0, arg1);
+    LOG("io_uring_setup requested: entries=%u flags=0x%x [%s]", entries, params->flags,
+        uring_setup_flags_str(params->flags));
 
-    if (res >= 0 && params != nullptr) {
-        LOG("io_uring_setup returned: ring_fd=%ld sq_entries=%u cq_entries=%u features=0x%x",
-            res, params->sq_entries, params->cq_entries, params->features);
-        LOG("  sq_off:  head=%u tail=%u ring_mask=%u ring_entries=%u flags=%u dropped=%u "
-            "array=%u",
-            params->sq_off.head, params->sq_off.tail, params->sq_off.ring_mask,
-            params->sq_off.ring_entries, params->sq_off.flags, params->sq_off.dropped,
-            params->sq_off.array);
-        LOG("  cq_off:  head=%u tail=%u ring_mask=%u ring_entries=%u overflow=%u cqes=%u "
-            "flags=%u",
-            params->cq_off.head, params->cq_off.tail, params->cq_off.ring_mask,
-            params->cq_off.ring_entries, params->cq_off.overflow, params->cq_off.cqes,
-            params->cq_off.flags);
-        // SINGLE_MMAP decides whether liburing issues 2 mmaps or 3.
-        LOG("  features: SINGLE_MMAP=%s NODROP=%s SUBMIT_STABLE=%s",
-            (params->features & IORING_FEAT_SINGLE_MMAP) ? "yes" : "no",
-            (params->features & IORING_FEAT_NODROP) ? "yes" : "no",
-            (params->features & IORING_FEAT_SUBMIT_STABLE) ? "yes" : "no");
-    } else if (res < 0) {
-        LOG("io_uring_setup failed: %ld", res);
+    // SQPOLL/IOPOLL are out of scope for the MVP: reject cleanly rather than
+    // pretend to support them (documented limitation).
+    if (params->flags & (IORING_SETUP_SQPOLL | IORING_SETUP_IOPOLL)) {
+        LOG("rejecting SQPOLL/IOPOLL setup: -EINVAL");
+        errno   = EINVAL;
+        *result = -errno;
+        return CAPIO_POSIX_SYSCALL_SUCCESS;
     }
 
-    *result = res;
+    // Fake fd the CAPIO way: a real kernel fd (so close/poll on it behave), but
+    // it names /dev/null, never a real ring. The ring lives in CapioRing.
+    int fake_fd = static_cast<int>(
+        syscall_no_intercept(SYS_openat, AT_FDCWD, "/dev/null", O_RDONLY, 0));
+    if (fake_fd == -1) {
+        ERR_EXIT("io_uring_setup: unable to open /dev/null for fake ring fd");
+    }
+
+    if (capio_rings == nullptr) {
+        capio_rings = new std::unordered_map<int, CapioRing>();
+    }
+    CapioRing &ring = (*capio_rings)[fake_fd];
+    ring.fake_fd    = fake_fd;
+    ring.sq_entries = uring_roundup_pow2(entries);
+    ring.cq_entries = ring.sq_entries * 2; // 2x so CQ overflow never needs handling
+
+    params->sq_entries = ring.sq_entries;
+    params->cq_entries = ring.cq_entries;
+    params->features   = IORING_FEAT_SINGLE_MMAP | IORING_FEAT_NODROP;
+
+    if (!uring_layout(ring, params)) {
+        capio_rings->erase(fake_fd);
+        syscall_no_intercept(SYS_close, fake_fd);
+        errno   = ENOMEM;
+        *result = -errno;
+        return CAPIO_POSIX_SYSCALL_SUCCESS;
+    }
+
+    LOG("io_uring_setup emulated: fake_fd=%d sq_entries=%u cq_entries=%u", fake_fd, ring.sq_entries,
+        ring.cq_entries);
+    *result = fake_fd;
     return CAPIO_POSIX_SYSCALL_SUCCESS;
 }
 #endif // SYS_io_uring_setup
