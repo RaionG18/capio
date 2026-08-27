@@ -10,6 +10,9 @@
 #include "utils/filesystem.hpp"
 #include "utils/uring.hpp"
 
+#include "read.hpp"
+#include "write.hpp"
+
 /*
  * io_uring handlers (425-427).
  *
@@ -122,15 +125,47 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
 }
 #endif // SYS_io_uring_setup
 
-// Serve one SQE and produce its completion result. NOP only for F3.2; real
-// opcodes delegate to the existing capio_* handlers in F3.3.
+// io_uring uses ~0ULL in off to mean "use the current file position". For an
+// explicit offset we point the CAPIO fd there before delegating, so capio_read /
+// capio_write (which work from the fd's tracked offset) honour the SQE's offset.
+static void uring_seek_if_explicit(int fd, uint64_t off) {
+    if (off != static_cast<uint64_t>(-1)) {
+        set_capio_fd_offset(fd, static_cast<off64_t>(off));
+    }
+}
+
+// Serve one SQE and produce its completion result (bytes transferred, or -errno
+// as the io_uring convention). Real opcodes delegate to the existing capio_*
+// handlers so the data path, cache and CAPIO-CL semantics are reused, not
+// reimplemented. Only CAPIO fds are handled here; non-CAPIO fds arrive in F3.4.
 static int32_t uring_dispatch_sqe(const io_uring_sqe *sqe, long tid) {
-    START_LOG(tid, "call(opcode=%u, user_data=%llu)", sqe->opcode,
+    START_LOG(tid, "call(opcode=%u, fd=%d, user_data=%llu)", sqe->opcode, sqe->fd,
               (unsigned long long) sqe->user_data);
 
     switch (sqe->opcode) {
     case IORING_OP_NOP:
+    case IORING_OP_FSYNC:
+        // Durability is provided by CAPIO's commit rule, not fsync.
         return 0;
+
+    case IORING_OP_WRITE: {
+        if (!exists_capio_fd(sqe->fd)) {
+            return -EINVAL; // non-CAPIO fd: handled in F3.4
+        }
+        uring_seek_if_explicit(sqe->fd, sqe->off);
+        return static_cast<int32_t>(
+            capio_write(sqe->fd, reinterpret_cast<const void *>(sqe->addr), sqe->len, tid));
+    }
+
+    case IORING_OP_READ: {
+        if (!exists_capio_fd(sqe->fd)) {
+            return -EINVAL;
+        }
+        uring_seek_if_explicit(sqe->fd, sqe->off);
+        return static_cast<int32_t>(
+            capio_read(sqe->fd, reinterpret_cast<void *>(sqe->addr), sqe->len, tid));
+    }
+
     default:
         LOG("opcode %u not implemented yet", sqe->opcode);
         return -EINVAL;
@@ -164,15 +199,16 @@ int io_uring_enter_handler(long arg0, long arg1, long arg2, long arg3, long arg4
         return CAPIO_POSIX_SYSCALL_SKIP; // not a CAPIO ring: kernel handles it
     }
 
-    // Drain to_submit SQEs. liburing has already published the sq array and tail
-    // (in CAPIO memory) inside io_uring_submit, before this syscall. Processing
-    // synchronously here is semantically valid: io_uring does not guarantee
-    // async, and the kernel itself often completes inline.
+    // Drain to_submit SQEs. liburing has already advanced the SQ tail (in CAPIO
+    // memory) inside io_uring_submit, before this syscall. liburing requests
+    // IORING_SETUP_NO_SQARRAY, so SQEs occupy ring slots directly and the sq
+    // array indirection is unused -- sqes[i & mask] is the i-th SQE. Processing
+    // synchronously here is valid: io_uring does not guarantee async, and the
+    // kernel itself often completes inline.
     uint32_t head      = *ring->sq_head;
     uint32_t submitted = 0;
     while (submitted < to_submit) {
-        uint32_t sqe_index      = ring->sq_array[head & *ring->sq_mask];
-        const io_uring_sqe *sqe = &ring->sqes[sqe_index];
+        const io_uring_sqe *sqe = &ring->sqes[head & *ring->sq_mask];
         int32_t res             = uring_dispatch_sqe(sqe, tid);
         uring_post_cqe(*ring, sqe->user_data, res);
         ++head;
