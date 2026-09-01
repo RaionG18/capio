@@ -47,7 +47,11 @@ capio_logs
 # Other
 debug
 build
+build-log
 
 .capio_tokens
 
 cmake_test_discovery*.json
+examples/io_uring/bench_results.csv
+build-test
+build-rebase
