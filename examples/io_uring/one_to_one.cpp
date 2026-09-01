@@ -303,6 +303,20 @@ static void uring_reap(io_uring &ring, int count, std::vector<int> &res)
     }
 }
 
+static void uring_submit_and_reap(io_uring &ring, int count, std::vector<int> &res)
+{
+    int remaining = count;
+    while (remaining > 0) {
+        int submitted = io_uring_submit_and_wait(&ring, remaining);
+        if (submitted < 0)
+            die(std::string("io_uring_submit_and_wait: ") + strerror(-submitted));
+        if (submitted == 0)
+            die("io_uring_submit_and_wait: submitted 0 SQEs");
+        uring_reap(ring, submitted, res);
+        remaining -= submitted;
+    }
+}
+
 // Ring and buffers live here so they are set up once, not per file: otherwise
 // that cost dominates a many-small-files run. Memory is queue_depth * chunk_size.
 struct UringCtx {
@@ -358,9 +372,7 @@ static uint64_t uring_write_file(UringCtx &ctx, const Config &cfg, int idx)
             ++count;
         }
 
-        if (int r = io_uring_submit_and_wait(&ctx.ring, count); r < 0)
-            die(std::string("io_uring_submit_and_wait: ") + strerror(-r));
-        uring_reap(ctx.ring, count, ctx.res);
+        uring_submit_and_reap(ctx.ring, count, ctx.res);
 
         for (int k = 0; k < count; ++k) {
             if (ctx.res[k] < 0)
@@ -405,9 +417,7 @@ static bool uring_read_file(UringCtx &ctx, const Config &cfg, int idx)
             ++count;
         }
 
-        if (int r = io_uring_submit_and_wait(&ctx.ring, count); r < 0)
-            die(std::string("io_uring_submit_and_wait: ") + strerror(-r));
-        uring_reap(ctx.ring, count, ctx.res);
+        uring_submit_and_reap(ctx.ring, count, ctx.res);
 
         for (int k = 0; k < count; ++k) {
             if (ctx.res[k] < 0)

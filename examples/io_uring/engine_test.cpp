@@ -16,11 +16,13 @@
 #undef main
 
 #include <cassert>
+#include <filesystem>
 #include <sys/stat.h>
 
 // The engine under test. main() points these at each engine in turn.
 static uint64_t (*WRITE)(const Config &, int) = nullptr;
 static bool     (*READ)(const Config &, int)  = nullptr;
+static std::string test_dir;
 
 // Owning wrappers so the uring engine matches the (Config,idx) test signature.
 // A per-call ring is fine here — these tests check correctness, not throughput.
@@ -56,7 +58,7 @@ static long long on_disk_size(const std::string &path)
 // the last chunk is partial. Checks exact on-disk size and round-trip.
 static void check_partial_chunk()
 {
-    Config cfg = make_cfg("/tmp", 10000, 4096);   // 3 chunks, last = 1808 bytes
+    Config cfg = make_cfg(test_dir.c_str(), 10000, 4096);   // 3 chunks, last = 1808 bytes
     WRITE(cfg, 0);
     assert(on_disk_size(file_path(cfg.dir, 0)) == cfg.file_size);
     assert(READ(cfg, 0));
@@ -66,7 +68,7 @@ static void check_partial_chunk()
 // T1: every file in a multi-file run is written and verified.
 static void check_multi_file()
 {
-    Config cfg = make_cfg("/tmp", 8192, 4096);
+    Config cfg = make_cfg(test_dir.c_str(), 8192, 4096);
     for (int i = 0; i < 5; ++i)
         WRITE(cfg, i);
     for (int i = 0; i < 5; ++i)
@@ -78,7 +80,7 @@ static void check_multi_file()
 // T2: a single flipped byte on disk is detected.
 static void check_corruption()
 {
-    Config cfg = make_cfg("/tmp", 8192, 4096);
+    Config cfg = make_cfg(test_dir.c_str(), 8192, 4096);
     WRITE(cfg, 0);
 
     const std::string path = file_path(cfg.dir, 0);
@@ -98,7 +100,7 @@ static void check_corruption()
 // i.e. the pattern is per-file, not just per-position.
 static void check_isolation()
 {
-    Config cfg = make_cfg("/tmp", 8192, 4096);
+    Config cfg = make_cfg(test_dir.c_str(), 8192, 4096);
     WRITE(cfg, 2);
     WRITE(cfg, 7);
     assert(READ(cfg, 2));
@@ -114,7 +116,7 @@ static void check_isolation()
 // T4: a truncated file is detected (EOF before the expected length).
 static void check_truncation()
 {
-    Config cfg = make_cfg("/tmp", 8192, 4096);
+    Config cfg = make_cfg(test_dir.c_str(), 8192, 4096);
     WRITE(cfg, 0);
 
     const std::string path = file_path(cfg.dir, 0);
@@ -127,7 +129,7 @@ static void check_truncation()
 // T5: chunk_size == file_size (a single, full chunk; no partial path).
 static void check_single_chunk()
 {
-    Config cfg = make_cfg("/tmp", 4096, 4096);
+    Config cfg = make_cfg(test_dir.c_str(), 4096, 4096);
     WRITE(cfg, 0);
     assert(READ(cfg, 0));
     unlink(file_path(cfg.dir, 0).c_str());
@@ -136,7 +138,7 @@ static void check_single_chunk()
 // T6: file_size an exact multiple of chunk_size (no partial last chunk).
 static void check_exact_multiple()
 {
-    Config cfg = make_cfg("/tmp", 8192, 4096);
+    Config cfg = make_cfg(test_dir.c_str(), 8192, 4096);
     WRITE(cfg, 0);
     assert(READ(cfg, 0));
     unlink(file_path(cfg.dir, 0).c_str());
@@ -147,7 +149,7 @@ static void check_exact_multiple()
 // safety, only that the engine works far past a handful of chunks.
 static void check_large()
 {
-    Config cfg = make_cfg("/tmp", 8LL * 1024 * 1024 + 123, 1024 * 1024);
+    Config cfg = make_cfg(test_dir.c_str(), 8LL * 1024 * 1024 + 123, 1024 * 1024);
     WRITE(cfg, 0);
     assert(on_disk_size(file_path(cfg.dir, 0)) == cfg.file_size);
     assert(READ(cfg, 0));
@@ -175,7 +177,7 @@ static void run_battery(const char *name,
 // verify with the OTHER, and confirm the write checksums match.
 static void check_cross_engine()
 {
-    Config cfg = make_cfg("/tmp", 10000, 4096);
+    Config cfg = make_cfg(test_dir.c_str(), 10000, 4096);
 
     const uint64_t sum_posix = posix_write_file(cfg, 0);
     assert(uring_read_owned(cfg, 0));                // POSIX-written, uring-read
@@ -191,8 +193,15 @@ static void check_cross_engine()
 
 int main()
 {
+    char dir_template[] = "/tmp/capio_io_uring_test.XXXXXX";
+    char *dir = mkdtemp(dir_template);
+    assert(dir != nullptr);
+    test_dir = dir;
+
     run_battery("POSIX", posix_write_file, posix_read_file);
     run_battery("io_uring", uring_write_owned, uring_read_owned);
     check_cross_engine();
+
+    std::filesystem::remove_all(test_dir);
     return 0;
 }

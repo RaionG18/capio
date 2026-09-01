@@ -183,5 +183,34 @@ inline CapioRing *get_capio_ring(int fd) {
     return it == capio_rings->end() ? nullptr : &it->second;
 }
 
+inline void destroy_capio_ring(CapioRing &ring) {
+    if (ring.sq_ring != nullptr) {
+        munmap(ring.sq_ring, ring.sq_ring_size);
+        ring.sq_ring = nullptr;
+    }
+    if (ring.sqes != nullptr) {
+        munmap(ring.sqes, ring.sqes_size);
+        ring.sqes = nullptr;
+    }
+}
+
+inline bool destroy_capio_ring(int fd) {
+    if (capio_rings == nullptr) {
+        return false;
+    }
+    auto it = capio_rings->find(fd);
+    if (it == capio_rings->end()) {
+        return false;
+    }
+
+    destroy_capio_ring(it->second);
+    capio_rings->erase(it);
+    if (capio_rings->empty()) {
+        delete capio_rings;
+        capio_rings = nullptr;
+    }
+    return true;
+}
+
 #endif // SYS_io_uring_setup
 #endif // CAPIO_POSIX_UTILS_URING_HPP

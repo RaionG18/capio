@@ -64,21 +64,20 @@ the server, then run the two steps with the CAPIO library preloaded:
 CAPIO_DIR=/tmp/mnt capio_server -c capio_config.json &
 
 CAPIO_DIR=/tmp/mnt CAPIO_WORKFLOW_NAME=io_uring_example CAPIO_APP_NAME=producer \
-  LD_PRELOAD=libcapio_posix.so ./build/one_to_one -r producer -e posix -n 100 -f 1048576 -c 65536 -d /tmp/mnt
+  LD_PRELOAD=libcapio_posix.so INTERCEPT_ALL_OBJS=1 \
+  ./build/one_to_one -r producer -e io_uring -q 32 -n 100 -f 1048576 -c 65536 -d /tmp/mnt
 
 CAPIO_DIR=/tmp/mnt CAPIO_WORKFLOW_NAME=io_uring_example CAPIO_APP_NAME=consumer \
-  LD_PRELOAD=libcapio_posix.so ./build/one_to_one -r consumer -e posix -n 100 -f 1048576 -c 65536 -d /tmp/mnt
+  LD_PRELOAD=libcapio_posix.so INTERCEPT_ALL_OBJS=1 \
+  ./build/one_to_one -r consumer -e io_uring -q 32 -n 100 -f 1048576 -c 65536 -d /tmp/mnt
 ```
 
-With the POSIX engine the files pass through CAPIO, and the consumer verifies
-them. The files do not appear on the real filesystem; drop `LD_PRELOAD` from
-the consumer and it fails, which shows CAPIO carried the data.
-
-The io_uring engine does **not** work under CAPIO yet. CAPIO intercepts
-`open` and hands back a file descriptor of its own, but io_uring passes that
-descriptor straight to the kernel, which does not know it, so the write fails
-with `Bad file descriptor`. Teaching CAPIO to serve io_uring is the next step
-of this work.
+With CAPIO's io_uring handlers enabled, both `posix` and `io_uring` engines
+run through the middleware and verify all files. For the `io_uring` path, keep
+`INTERCEPT_ALL_OBJS=1` and provide `-q` so liburing submits through CAPIO's
+emulated ring. As with the POSIX engine, the files do not appear on the real
+filesystem; drop `LD_PRELOAD` from the consumer and it fails, which confirms
+interception.
 
 ## Tests and benchmark
 
