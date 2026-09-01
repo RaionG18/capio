@@ -86,10 +86,16 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
     LOG("io_uring_setup requested: entries=%u flags=0x%x [%s]", entries, params->flags,
         uring_setup_flags_str(params->flags));
 
-    // This MVP accepts no setup flags yet; any non-zero flag requests semantics
-    // not implemented by the emulation.
-    if (params->flags != 0) {
-        LOG("rejecting unsupported setup flags: 0x%x", params->flags);
+    // Accept only the setup flags the emulation actually honours; reject the
+    // rest with -EINVAL rather than depending on liburing retrying with flags=0.
+    // NO_SQARRAY (drop the SQ index-array indirection) is a no-op for us: the
+    // enter drain already reads sqes[head & mask] directly, so it is supported.
+    // Everything else changes ring geometry (SQE128/CQE32/CQSIZE), the mmap
+    // mechanism (NO_MMAP), or requires real async (SQPOLL/IOPOLL), none of which
+    // the synchronous MVP implements.
+    constexpr unsigned kSupportedFlags = IORING_SETUP_NO_SQARRAY;
+    if (params->flags & ~kSupportedFlags) {
+        LOG("rejecting unsupported setup flags: 0x%x", params->flags & ~kSupportedFlags);
         errno   = EINVAL;
         *result = -errno;
         return CAPIO_POSIX_SYSCALL_SUCCESS;
