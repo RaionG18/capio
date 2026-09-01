@@ -5,6 +5,7 @@
 #include <climits>
 #include <cstdlib>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,18 @@ CPFilesPaths_t *capio_files_paths;
 std::unique_ptr<std::filesystem::path> current_dir;
 CPFiles_t *files;
 
+/*
+ * The metadata structures above are shared by every thread of the intercepted
+ * process (unlike the thread_local caches and request buffers). Guard all
+ * accesses with this recursive mutex to avoid data races (e.g. a concurrent
+ * unordered_map rehash) that would otherwise corrupt lookups. A recursive mutex
+ * is required because some accessors call others while already holding it.
+ */
+inline std::recursive_mutex &capio_fs_mutex() {
+    static std::recursive_mutex mutex;
+    return mutex;
+}
+
 /**
  * Set the CLOEXEC property of a file descriptor in metadata structures
  * @param fd
@@ -29,6 +42,7 @@ CPFiles_t *files;
  * @return
  */
 inline void set_capio_fd_cloexec(int fd, bool is_cloexec) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
     std::get<3>(files->at(fd)) = is_cloexec;
 }
 
@@ -44,6 +58,7 @@ inline const std::filesystem::path &get_current_dir() { return *current_dir; }
  * @return
  */
 inline void add_capio_path(const std::string &path) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
     capio_files_paths->emplace(path, std::unordered_set<int>{});
 }
 
@@ -55,6 +70,7 @@ inline void add_capio_path(const std::string &path) {
  */
 inline void add_capio_fd(long tid, const std::string &path, int fd, off64_t offset,
                          off64_t init_size, int flags, bool is_cloexec) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
     add_capio_path(path);
     capio_files_paths->at(path).insert(fd);
     capio_files_descriptors->insert({fd, path});
@@ -110,6 +126,7 @@ inline std::filesystem::path capio_absolute(const std::filesystem::path &path) {
  * @return
  */
 inline void delete_capio_fd(int fd) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
     auto &path = capio_files_descriptors->at(fd);
     capio_files_paths->at(path).erase(fd);
     capio_files_descriptors->erase(fd);
@@ -122,6 +139,7 @@ inline void delete_capio_fd(int fd) {
  * @return
  */
 inline void delete_capio_path(const std::string &path) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
     auto it = capio_files_paths->at(path).begin();
     while (it != capio_files_paths->at(path).end()) {
         delete_capio_fd(*it++);
@@ -147,6 +165,7 @@ inline void destroy_filesystem() {
  * @return
  */
 inline void dup_capio_fd(long tid, int oldfd, int newfd, bool is_cloexec) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
     const std::string &path = capio_files_descriptors->at(oldfd);
     capio_files_paths->at(path).insert(newfd);
     files->insert({newfd, files->at(oldfd)});
@@ -160,6 +179,7 @@ inline void dup_capio_fd(long tid, int oldfd, int newfd, bool is_cloexec) {
  * @return if the file descriptor exists
  */
 inline bool exists_capio_fd(int fd) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
     START_LOG(capio_syscall(SYS_gettid), "call(fd=%d)", fd);
     return files->find(fd) != files->end();
 }
@@ -170,6 +190,7 @@ inline bool exists_capio_fd(int fd) {
  * @return if the path exists
  */
 inline bool exists_capio_path(const std::string &path) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
     return capio_files_paths->find(path) != capio_files_paths->end();
 }
 
@@ -178,41 +199,57 @@ inline bool exists_capio_path(const std::string &path) {
  * @param fd
  * @return the CLOEXEC property
  */
-inline bool get_capio_fd_cloexec(int fd) { return std::get<3>(files->at(fd)); }
+inline bool get_capio_fd_cloexec(int fd) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
+    return std::get<3>(files->at(fd));
+}
 
 /**
  * Get the active flags of a file descriptor in metadata structures
  * @param fd
  * @return the active flags
  */
-inline bool get_capio_fd_flags(int fd) { return std::get<2>(files->at(fd)); }
+inline bool get_capio_fd_flags(int fd) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
+    return std::get<2>(files->at(fd));
+}
 
 /**
  * Get the path of a file descriptor
  * @param fd
  * @return the file descriptor path
  */
-inline const std::string &get_capio_fd_path(int fd) { return capio_files_descriptors->at(fd); }
+inline const std::string &get_capio_fd_path(int fd) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
+    return capio_files_descriptors->at(fd);
+}
 
 /**
  * Get the current offset of a file descriptor
  * @param fd
  * @return the current offset
  */
-inline off64_t get_capio_fd_offset(int fd) { return *std::get<0>(files->at(fd)); }
+inline off64_t get_capio_fd_offset(int fd) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
+    return *std::get<0>(files->at(fd));
+}
 
 /**
  * Get the actual size of a file descriptor
  * @param fd
  * @return the actual size of the file
  */
-inline off64_t get_capio_fd_size(int fd) { return std::get<1>(files->at(fd)); }
+inline off64_t get_capio_fd_size(int fd) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
+    return std::get<1>(files->at(fd));
+}
 
 /**
  * Get all the file descriptors stored in metadata structures
  * @return a vector of file descriptors
  */
 inline std::vector<int> get_capio_fds() {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
     std::vector<int> fds;
     fds.reserve(files->size());
     for (auto &file : *files) {
@@ -227,6 +264,7 @@ inline std::vector<int> get_capio_fds() {
  * @return the corresponding path
  */
 std::filesystem::path get_dir_path(int dirfd) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
     START_LOG(syscall_no_intercept(SYS_gettid), "call(dirfd=%d)", dirfd);
 
     if (dirfd == AT_FDCWD) {
@@ -270,6 +308,7 @@ inline void init_filesystem() {
  * @return
  */
 inline void rename_capio_path(const std::string &oldpath, const std::string &newpath) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
     auto entry  = capio_files_paths->extract(oldpath);
     entry.key() = newpath;
     capio_files_paths->insert(std::move(entry));
@@ -284,7 +323,10 @@ inline void rename_capio_path(const std::string &oldpath, const std::string &new
  * @param flags
  * @return
  */
-inline void set_capio_fd_flags(int fd, int flags) { std::get<2>(files->at(fd)) = flags; }
+inline void set_capio_fd_flags(int fd, int flags) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
+    std::get<2>(files->at(fd)) = flags;
+}
 
 /**
  * Set the offset of a file descriptor in metadata structures
@@ -292,7 +334,10 @@ inline void set_capio_fd_flags(int fd, int flags) { std::get<2>(files->at(fd)) =
  * @param offset
  * @return
  */
-inline void set_capio_fd_offset(int fd, off64_t offset) { *std::get<0>(files->at(fd)) = offset; }
+inline void set_capio_fd_offset(int fd, off64_t offset) {
+    std::lock_guard<std::recursive_mutex> lock(capio_fs_mutex());
+    *std::get<0>(files->at(fd)) = offset;
+}
 
 /**
  * Change the current directory
