@@ -11,6 +11,11 @@
 
 #include "common/logger.hpp"
 
+// Added in Linux 6.6; define it for older kernel headers (stable ABI value).
+#ifndef IORING_SETUP_NO_SQARRAY
+#define IORING_SETUP_NO_SQARRAY (1U << 16)
+#endif
+
 // CAPIO's own io_uring ring: CAPIO owns and lays out the two mmap regions, and
 // the fabricated sq_off/cq_off tell liburing where each field lives. Layout of
 // the SQ_RING region (holds the CQ too, via SINGLE_MMAP); SQES holds the sqes:
