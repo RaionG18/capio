@@ -101,9 +101,9 @@ run_capio() {
 
         # Redirect each app's output to a log (stderr included) so an engine
         # failure never bleeds into the results table; harvest from the logs.
-        timeout 30 env "${penv[@]}" CAPIO_APP_NAME=producer \
+        timeout --kill-after=5 30 env "${penv[@]}" CAPIO_APP_NAME=producer \
             "$bin" -r producer -e "$engine" "${common[@]}" -d "$d" >"$d/prod.log" 2>&1
-        timeout 30 env "${penv[@]}" CAPIO_APP_NAME=consumer \
+        timeout --kill-after=5 30 env "${penv[@]}" CAPIO_APP_NAME=consumer \
             "$bin" -r consumer -e "$engine" "${common[@]}" -d "$d" >"$d/cons.log" 2>&1
 
         prods+=("$(mbps_of <"$d/prod.log")")
@@ -117,7 +117,6 @@ run_capio() {
         fi
 
         stop_server
-        pkill -9 -x one_to_one 2>/dev/null   # reap any process the timeout left
     done
     pm=$(printf '%s\n' "${prods[@]}" | median)
     cm=$(printf '%s\n' "${conss[@]}" | median)
