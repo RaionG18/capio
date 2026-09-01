@@ -240,14 +240,24 @@ static void uring_post_cqe(CapioRing &ring, uint64_t user_data, int32_t res) {
     __atomic_store_n(ring.cq_tail, tail + 1, __ATOMIC_RELEASE);
 }
 
-static void uring_wait_min_complete(const CapioRing &ring, unsigned min_complete) {
+// io_uring_enter's min_complete contract: return once at least that many
+// completions are ready. This MVP processes every SQE synchronously before this
+// point, so the needed completions are already posted -- there is nothing to
+// wait for, and no busy-wait/sleep is warranted. If the app asks for more
+// completions than the ring holds, that number can never be reached
+// synchronously (no async producer exists yet), so we cap the requirement at
+// what the CQ can hold instead of blocking forever.
+//
+// PONYTAIL: this is the synchronous contract only. F5 (async completions) adds a
+// thread that posts CQEs as CAPIO responses arrive; there this must become a
+// real blocking wait on a semaphore the poster signals (like Queue's
+// _sem_num_elems), never a sleep-poll.
+static bool uring_min_complete_satisfied(const CapioRing &ring, unsigned min_complete) {
     if (min_complete == 0) {
-        return;
+        return true;
     }
-    const timespec sleep_step = {0, 1000000}; // 1ms
-    while (uring_cq_ready(ring) < min_complete) {
-        nanosleep(&sleep_step, nullptr);
-    }
+    unsigned reachable = std::min<unsigned>(min_complete, *ring.cq_ring_entries);
+    return uring_cq_ready(ring) >= reachable;
 }
 
 #ifdef SYS_io_uring_enter
@@ -293,8 +303,14 @@ int io_uring_enter_handler(long arg0, long arg1, long arg2, long arg3, long arg4
         return CAPIO_POSIX_SYSCALL_SUCCESS;
     }
 
-    uring_wait_min_complete(*ring, min_complete);
-
+    // Synchronous processing already posted every completion this call can
+    // produce, so the min_complete contract holds without any wait. If it does
+    // not, an assumption broke (the drain and the contract disagree) -- surface
+    // it instead of masking it with a spin.
+    if (!uring_min_complete_satisfied(*ring, min_complete)) {
+        LOG("io_uring_enter: min_complete=%u unmet after synchronous drain (ready=%u)",
+            min_complete, uring_cq_ready(*ring));
+    }
     LOG("io_uring_enter: served %u SQEs synchronously (min_complete=%u, requested_submit=%u)",
         submitted, min_complete, to_submit);
 
