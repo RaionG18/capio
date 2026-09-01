@@ -1,11 +1,10 @@
 #ifndef CAPIO_POSIX_HANDLERS_IO_URING_HPP
 #define CAPIO_POSIX_HANDLERS_IO_URING_HPP
 
-#if defined(SYS_io_uring_setup) || defined(SYS_io_uring_enter) ||                                  \
-    defined(SYS_io_uring_register)
+#if defined(SYS_io_uring_setup) || defined(SYS_io_uring_enter) || defined(SYS_io_uring_register)
 
-#include <linux/io_uring.h>
 #include <algorithm>
+#include <linux/io_uring.h>
 #include <time.h>
 
 #include "utils/common.hpp"
@@ -35,12 +34,9 @@ static const char *uring_setup_flags_str(unsigned flags) {
         unsigned bit;
         const char *name;
     } static constexpr kFlags[] = {
-        {IORING_SETUP_IOPOLL, "IOPOLL"},
-        {IORING_SETUP_SQPOLL, "SQPOLL"},
-        {IORING_SETUP_SQ_AFF, "SQ_AFF"},
-        {IORING_SETUP_CQSIZE, "CQSIZE"},
-        {IORING_SETUP_CLAMP, "CLAMP"},
-        {IORING_SETUP_ATTACH_WQ, "ATTACH_WQ"},
+        {IORING_SETUP_IOPOLL, "IOPOLL"}, {IORING_SETUP_SQPOLL, "SQPOLL"},
+        {IORING_SETUP_SQ_AFF, "SQ_AFF"}, {IORING_SETUP_CQSIZE, "CQSIZE"},
+        {IORING_SETUP_CLAMP, "CLAMP"},   {IORING_SETUP_ATTACH_WQ, "ATTACH_WQ"},
     };
 
     for (const auto &f : kFlags) {
@@ -101,8 +97,8 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
 
     // Fake fd the CAPIO way: a real kernel fd (so close/poll on it behave), but
     // it names /dev/null, never a real ring. The ring lives in CapioRing.
-    int fake_fd = static_cast<int>(
-        syscall_no_intercept(SYS_openat, AT_FDCWD, "/dev/null", O_RDONLY, 0));
+    int fake_fd =
+        static_cast<int>(syscall_no_intercept(SYS_openat, AT_FDCWD, "/dev/null", O_RDONLY, 0));
     if (fake_fd == -1) {
         ERR_EXIT("io_uring_setup: unable to open /dev/null for fake ring fd");
     }
@@ -193,9 +189,8 @@ static int32_t uring_dispatch_sqe(const io_uring_sqe *sqe, long tid) {
             return 0;
         }
         if (syscall_no_intercept((sqe->fsync_flags & IORING_FSYNC_DATASYNC) ? SYS_fdatasync
-                                                                             : SYS_fsync,
-                                 sqe->fd)
-            < 0) {
+                                                                            : SYS_fsync,
+                                 sqe->fd) < 0) {
             return -errno;
         }
         return 0;
@@ -230,7 +225,7 @@ static bool uring_cq_has_space(const CapioRing &ring) {
 
 // Post one completion into the CQ, preserving user_data (io_uring convention).
 static void uring_post_cqe(CapioRing &ring, uint64_t user_data, int32_t res) {
-    uint32_t tail = *ring.cq_tail;
+    uint32_t tail     = *ring.cq_tail;
     io_uring_cqe &cqe = ring.cqes[tail & *ring.cq_mask];
     cqe.user_data     = user_data;
     cqe.res           = res;
@@ -305,10 +300,10 @@ int io_uring_enter_handler(long arg0, long arg1, long arg2, long arg3, long arg4
 #ifdef SYS_io_uring_register
 int io_uring_register_handler(long arg0, long arg1, long arg2, long arg3, long arg4, long arg5,
                               long *result) {
-    auto ring_fd  = static_cast<int>(arg0);
-    auto opcode   = static_cast<unsigned>(arg1);
-    auto nr_args  = static_cast<unsigned>(arg3);
-    long tid      = syscall_no_intercept(SYS_gettid);
+    auto ring_fd = static_cast<int>(arg0);
+    auto opcode  = static_cast<unsigned>(arg1);
+    auto nr_args = static_cast<unsigned>(arg3);
+    long tid     = syscall_no_intercept(SYS_gettid);
     START_LOG(tid, "call(ring_fd=%d, opcode=%u, nr_args=%u)", ring_fd, opcode, nr_args);
 
     // Registration is out of scope for the MVP; logging it shows whether real

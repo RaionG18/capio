@@ -36,10 +36,10 @@ struct CapioRing {
     uint32_t cq_entries;
 
     // The two mmap regions, owned here.
-    void *sq_ring   = nullptr; // IORING_OFF_SQ_RING: rings + sq array + cqes
+    void *sq_ring       = nullptr; // IORING_OFF_SQ_RING: rings + sq array + cqes
     size_t sq_ring_size = 0;
-    io_uring_sqe *sqes = nullptr; // IORING_OFF_SQES
-    size_t sqes_size   = 0;
+    io_uring_sqe *sqes  = nullptr; // IORING_OFF_SQES
+    size_t sqes_size    = 0;
 
     // Pointers into sq_ring, set by layout(). Named to match the ring fields
     // liburing reads through the reported offsets.
@@ -95,21 +95,21 @@ inline bool uring_layout(CapioRing &ring, io_uring_params *params) {
     place(ring.cq_overflow);
     place(ring.cq_flags);
 
-    off                     = uring_align_up(off, alignof(io_uring_cqe));
-    const size_t cqes_off   = off;
+    off                   = uring_align_up(off, alignof(io_uring_cqe));
+    const size_t cqes_off = off;
     off += sizeof(io_uring_cqe) * cqe_n;
 
     ring.sq_ring_size = uring_align_up(off, 4096);
     ring.sqes_size    = uring_align_up(sizeof(io_uring_sqe) * sqe_n, 4096);
 
-    void *sq = mmap(nullptr, ring.sq_ring_size, PROT_READ | PROT_WRITE,
-                    MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    void *sq = mmap(nullptr, ring.sq_ring_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE,
+                    -1, 0);
     if (sq == MAP_FAILED) {
         LOG("sq_ring mmap failed");
         return false;
     }
-    void *sqes = mmap(nullptr, ring.sqes_size, PROT_READ | PROT_WRITE,
-                      MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    void *sqes =
+        mmap(nullptr, ring.sqes_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
     if (sqes == MAP_FAILED) {
         munmap(sq, ring.sq_ring_size);
         LOG("sqes mmap failed");
