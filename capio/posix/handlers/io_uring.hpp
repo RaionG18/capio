@@ -15,13 +15,9 @@
 #include "write.hpp"
 
 /*
- * io_uring handlers (425-427).
- *
- * setup builds a CAPIO-owned ring (fake fd + fabricated params) instead of the
- * kernel's, so the SQEs the application submits never reach the kernel and can
- * be served by CAPIO. enter and register stay log-only for now (F3.2+ turns
- * enter into the SQ drain). The emulated mmap that backs the ring lives in
- * mmap.hpp and keys off the fake fd registered here.
+ * io_uring handlers (425-427). setup builds a CAPIO-owned ring (fake fd +
+ * fabricated params) so SQEs never reach the kernel; enter drains and serves
+ * them; the ring's emulated mmap lives in mmap.hpp, keyed off the fake fd.
  */
 
 // Logged so the emulated setup knows which flags real workloads request.
@@ -86,13 +82,9 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
     LOG("io_uring_setup requested: entries=%u flags=0x%x [%s]", entries, params->flags,
         uring_setup_flags_str(params->flags));
 
-    // Accept only the setup flags the emulation actually honours; reject the
-    // rest with -EINVAL rather than depending on liburing retrying with flags=0.
-    // NO_SQARRAY (drop the SQ index-array indirection) is a no-op for us: the
-    // enter drain already reads sqes[head & mask] directly, so it is supported.
-    // Everything else changes ring geometry (SQE128/CQE32/CQSIZE), the mmap
-    // mechanism (NO_MMAP), or requires real async (SQPOLL/IOPOLL), none of which
-    // the synchronous MVP implements.
+    // Allowlist, not denylist: NO_SQARRAY is a no-op for us (the drain reads
+    // sqes[head & mask] directly), so accept it; reject every other flag with
+    // -EINVAL (they change geometry, the mmap mechanism, or require real async).
     constexpr unsigned kSupportedFlags = IORING_SETUP_NO_SQARRAY;
     if (params->flags & ~kSupportedFlags) {
         LOG("rejecting unsupported setup flags: 0x%x", params->flags & ~kSupportedFlags);
@@ -240,18 +232,11 @@ static void uring_post_cqe(CapioRing &ring, uint64_t user_data, int32_t res) {
     __atomic_store_n(ring.cq_tail, tail + 1, __ATOMIC_RELEASE);
 }
 
-// io_uring_enter's min_complete contract: return once at least that many
-// completions are ready. This MVP processes every SQE synchronously before this
-// point, so the needed completions are already posted -- there is nothing to
-// wait for, and no busy-wait/sleep is warranted. If the app asks for more
-// completions than the ring holds, that number can never be reached
-// synchronously (no async producer exists yet), so we cap the requirement at
-// what the CQ can hold instead of blocking forever.
-//
-// PONYTAIL: this is the synchronous contract only. F5 (async completions) adds a
-// thread that posts CQEs as CAPIO responses arrive; there this must become a
-// real blocking wait on a semaphore the poster signals (like Queue's
-// _sem_num_elems), never a sleep-poll.
+// min_complete is already met: the synchronous drain posted every completion
+// before this runs, so there is nothing to wait for. Cap the requirement at CQ
+// capacity so an over-large min_complete is satisfiable, not a spin.
+// PONYTAIL (synchronous only): F5's async poster must make this a real blocking
+// wait on a semaphore it signals (like Queue's _sem_num_elems), never a sleep.
 static bool uring_min_complete_satisfied(const CapioRing &ring, unsigned min_complete) {
     if (min_complete == 0) {
         return true;
@@ -276,12 +261,9 @@ int io_uring_enter_handler(long arg0, long arg1, long arg2, long arg3, long arg4
         return CAPIO_POSIX_SYSCALL_SKIP; // not a CAPIO ring: kernel handles it
     }
 
-    // Drain to_submit SQEs. liburing has already advanced the SQ tail (in CAPIO
-    // memory) inside io_uring_submit, before this syscall. liburing requests
-    // IORING_SETUP_NO_SQARRAY, so SQEs occupy ring slots directly and the sq
-    // array indirection is unused -- sqes[i & mask] is the i-th SQE. Processing
-    // synchronously here is valid: io_uring does not guarantee async, and the
-    // kernel itself often completes inline.
+    // Drain to_submit SQEs. io_uring_submit already advanced the SQ tail in CAPIO
+    // memory; with NO_SQARRAY the SQEs sit in ring order, so sqes[i & mask] is the
+    // i-th. Synchronous processing is valid -- io_uring does not guarantee async.
     uint32_t head      = *ring->sq_head;
     uint32_t tail      = __atomic_load_n(ring->sq_tail, __ATOMIC_ACQUIRE);
     uint32_t available = tail - head;

@@ -9,14 +9,10 @@
 #include "utils/uring.hpp"
 
 /*
- * mmap/munmap handlers, active ONLY for CAPIO ring fds.
- *
- * liburing mmaps the ring fd twice after setup: offset IORING_OFF_SQ_RING for
- * the ring metadata (SQ + CQ, coalesced by SINGLE_MMAP) and offset
- * IORING_OFF_SQES for the SQE array. CAPIO answers each with the region it
- * already allocated in CapioRing, so liburing operates on CAPIO memory. Any
- * mmap whose fd is not a CAPIO ring is passed straight to the kernel -- this is
- * a surgical addition, not a general mmap interceptor.
+ * mmap/munmap handlers, active ONLY for CAPIO ring fds. liburing mmaps the ring
+ * fd twice after setup (SQ_RING metadata, coalesced with the CQ by SINGLE_MMAP;
+ * and SQES); each is answered with the CapioRing region so liburing operates on
+ * CAPIO memory. Any non-ring fd is passed straight to the kernel.
  */
 int mmap_handler(long arg0, long arg1, long arg2, long arg3, long arg4, long arg5, long *result) {
     auto fd     = static_cast<int>(arg4);

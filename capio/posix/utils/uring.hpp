@@ -11,25 +11,11 @@
 
 #include "common/logger.hpp"
 
-/*
- * CAPIO's own io_uring ring.
- *
- * When io_uring_setup is intercepted, CAPIO builds one of these instead of
- * asking the kernel. It owns the two regions liburing will mmap and lays them
- * out itself; the fabricated sq_off/cq_off in io_uring_params tell liburing
- * where each field lives, so liburing's inline get_sqe/peek_cqe operate on this
- * memory. This is what lets CAPIO serve SQEs that never reach the kernel.
- *
- * Layout of the SQ_RING region (returned for mmap offset IORING_OFF_SQ_RING),
- * one region because SINGLE_MMAP is advertised:
- *
- *   [ sq: head tail ring_mask ring_entries flags dropped ][ sq array ]
- *   [ cq: head tail ring_mask ring_entries overflow cqes flags ][ cqes[] ]
- *
- * The SQES region (offset IORING_OFF_SQES) holds the io_uring_sqe array.
- * Offsets are chosen here and reported back verbatim, so they are correct by
- * construction rather than by matching the kernel's numbers.
- */
+// CAPIO's own io_uring ring: CAPIO owns and lays out the two mmap regions, and
+// the fabricated sq_off/cq_off tell liburing where each field lives. Layout of
+// the SQ_RING region (holds the CQ too, via SINGLE_MMAP); SQES holds the sqes:
+//   [ sq: head tail ring_mask ring_entries flags dropped ][ sq array ]
+//   [ cq: head tail ring_mask ring_entries overflow cqes flags ][ cqes[] ]
 struct CapioRing {
     int fake_fd;
     uint32_t sq_entries;
@@ -61,9 +47,8 @@ static inline size_t uring_align_up(size_t n, size_t alignment) {
 
 /*
  * Lay out the two regions for `entries` SQEs and 2*entries CQEs, fill `params`
- * with the offsets chosen, and allocate the backing memory. Returns false on
- * allocation failure. Sizes are page-rounded so the emulated mmap can hand back
- * whole regions.
+ * with the chosen offsets, and allocate page-rounded backing memory. Returns
+ * false on allocation failure.
  */
 inline bool uring_layout(CapioRing &ring, io_uring_params *params) {
     START_LOG(capio_syscall(SYS_gettid), "call(entries=%u)", ring.sq_entries);
