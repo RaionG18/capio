@@ -7,18 +7,29 @@
 # For each: run the producer then the consumer REPS times, report the median
 # throughput (MB/s) of each, and confirm the consumer verifies every file.
 #
-# CAPIO-uring is expected to FAIL today: CAPIO intercepts POSIX syscalls but not
-# io_uring, so its files never reach CAPIO storage. That failure is the point —
-# it is the measured motivation for the interception work (thesis phase F3). The
-# script records it as "not intercepted" instead of aborting.
+# CAPIO-uring worked as of thesis phase F3: CAPIO owns the io_uring ring and
+# serves its SQEs, so the four configurations are all expected to verify. (Before
+# F3 this row failed with EBADF; the script still records any failure as
+# evidence instead of aborting.) The CAPIO runs need the io_uring-capable build
+# and INTERCEPT_ALL_OBJS=1 -- point at them with CAPIO_BIN_DIR / CAPIO_LIB, or
+# rely on an installed CAPIO for the plain POSIX baseline.
 #
 # Usage: bench.sh [binary] [-n N] [-f BYTES] [-c BYTES] [-q DEPTH] [-r REPS] [-D DIR]
+# Env:   CAPIO_LIB      path to libcapio_posix.so (default: libcapio_posix.so, found via loader)
+#        CAPIO_SERVER   path to capio_server binary (default: capio_server on PATH)
+#        CAPIO_INTERCEPT_ALL  set to 0 to disable INTERCEPT_ALL_OBJS (default: 1)
 set -u
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bin="$here/one_to_one"
 config="$here/capio_config.json"
 workflow="io_uring_example"
+
+# CAPIO bits: overridable so the benchmark can target a local build that has the
+# io_uring handlers, not just an installed CAPIO.
+capio_lib="${CAPIO_LIB:-libcapio_posix.so}"
+capio_server_bin="${CAPIO_SERVER:-capio_server}"
+intercept_all="${CAPIO_INTERCEPT_ALL:-1}"
 
 n=100 fsize=1048576 chunk=65536 q=32 reps=5
 # Real disk by default (NOT tmpfs) so numbers reflect storage, not RAM.
@@ -72,20 +83,21 @@ run_plain() {
     echo "$pm|$cm|$ok|"
 }
 
-# run_capio <engine> -> same, but under the CAPIO server. io_uring is expected
-# to fail AND to hang (the consumer blocks forever waiting for data CAPIO never
-# received, because it did not intercept the ring), so every app run is wrapped
-# in `timeout`: a timeout counts as "not intercepted", not a script hang.
+# run_capio <engine> -> same, but under the CAPIO server. Every app run is
+# wrapped in `timeout` so a hang (e.g. a broken run where the consumer waits for
+# data that never arrives) counts as a failure rather than hanging the script.
 run_capio() {
     local engine="$1" d ok=1 pm cm reason=""
     local prods=() conss=()
     for ((i=0;i<reps;i++)); do
         clean_shm
         d="$(mktemp -d "$work/capio.XXXX")"
-        CAPIO_DIR="$d" capio_server -c "$config" >"$d/server.log" 2>&1 &
+        CAPIO_DIR="$d" "$capio_server_bin" -c "$config" >"$d/server.log" 2>&1 &
         server_pid=$!
         sleep 2
-        local penv=(CAPIO_DIR="$d" CAPIO_WORKFLOW_NAME="$workflow" LD_PRELOAD=libcapio_posix.so)
+        local penv=(CAPIO_DIR="$d" CAPIO_WORKFLOW_NAME="$workflow" LD_PRELOAD="$capio_lib")
+        # io_uring under CAPIO needs liburing patched too (dev mode).
+        [ "$intercept_all" = 1 ] && penv+=(INTERCEPT_ALL_OBJS=1)
 
         # Redirect each app's output to a log (stderr included) so an engine
         # failure never bleeds into the results table; harvest from the logs.
