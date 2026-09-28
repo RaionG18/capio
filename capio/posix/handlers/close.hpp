@@ -17,7 +17,7 @@ int close_handler(long arg0, long arg1, long arg2, long arg3, long arg4, long ar
     if (get_capio_ring(fd) != nullptr) {
         long r = syscall_no_intercept(SYS_close, fd);
         if (r < 0) {
-            *result = -errno;
+            *result = r; // raw result: already -errno
             return CAPIO_POSIX_SYSCALL_SUCCESS;
         }
         destroy_capio_ring(fd);
