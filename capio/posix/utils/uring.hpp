@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 #include "common/logger.hpp"
+#include "common/syscall.hpp"
 
 // Added in Linux 6.6; define it for older kernel headers (stable ABI value).
 #ifndef IORING_SETUP_NO_SQARRAY
@@ -174,12 +175,13 @@ inline CapioRing *get_capio_ring(int fd) {
 }
 
 inline void destroy_capio_ring(CapioRing &ring) {
+    // Bypass the hook that keeps application munmap calls from freeing owned rings.
     if (ring.sq_ring != nullptr) {
-        munmap(ring.sq_ring, ring.sq_ring_size);
+        capio_syscall(SYS_munmap, ring.sq_ring, ring.sq_ring_size);
         ring.sq_ring = nullptr;
     }
     if (ring.sqes != nullptr) {
-        munmap(ring.sqes, ring.sqes_size);
+        capio_syscall(SYS_munmap, ring.sqes, ring.sqes_size);
         ring.sqes = nullptr;
     }
 }
