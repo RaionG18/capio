@@ -9,7 +9,7 @@
 #include <sys/mman.h>
 #include <unordered_map>
 
-#include "common/logger.hpp"
+#include "calf/SyscallLogger.h"
 #include "common/syscall.hpp"
 
 // Added in Linux 6.6; define it for older kernel headers (stable ABI value).
