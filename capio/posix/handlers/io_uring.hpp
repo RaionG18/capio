@@ -11,6 +11,7 @@
 #include "utils/filesystem.hpp"
 #include "utils/uring.hpp"
 
+#include "lseek.hpp"
 #include "read.hpp"
 #include "write.hpp"
 
@@ -161,11 +162,19 @@ static int32_t uring_capio_rw(const io_uring_sqe *sqe, bool is_write, long tid) 
     }
 
     off64_t saved = get_capio_fd_offset(sqe->fd);
-    set_capio_fd_offset(sqe->fd, static_cast<off64_t>(sqe->off));
+    // Seeking also flushes the caches and synchronizes the server's offset.
+    if (capio_lseek(sqe->fd, static_cast<off64_t>(sqe->off), SEEK_SET, tid) < 0) {
+        return -errno;
+    }
     auto res = static_cast<int32_t>(
         is_write ? capio_write(sqe->fd, reinterpret_cast<const void *>(sqe->addr), sqe->len, tid)
                  : capio_read(sqe->fd, reinterpret_cast<void *>(sqe->addr), sqe->len, tid));
-    set_capio_fd_offset(sqe->fd, saved);
+    if (res == CAPIO_POSIX_SYSCALL_ERRNO) {
+        res = -errno;
+    }
+    if (capio_lseek(sqe->fd, saved, SEEK_SET, tid) < 0) {
+        return -errno;
+    }
     return res;
 }
 
