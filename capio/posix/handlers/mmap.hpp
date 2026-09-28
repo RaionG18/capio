@@ -51,6 +51,7 @@ int munmap_handler(long arg0, long arg1, long arg2, long arg3, long arg4, long a
     // The ring's regions are owned by CapioRing and freed when the ring is torn
     // down, not on the app's munmap. If the address belongs to a ring, absorb
     // the munmap; otherwise let the kernel handle it.
+    const std::lock_guard<std::recursive_mutex> lock(capio_rings_mutex);
     if (capio_rings != nullptr) {
         for (auto &entry : *capio_rings) {
             CapioRing &r = entry.second;

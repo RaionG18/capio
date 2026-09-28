@@ -6,15 +6,37 @@
 #include <cstdint>
 #include <cstring>
 #include <linux/io_uring.h>
+#include <mutex>
 #include <sys/mman.h>
 #include <unordered_map>
 
 #include "calf/SyscallLogger.h"
 #include "common/syscall.hpp"
 
-// Added in Linux 6.6; define it for older kernel headers (stable ABI value).
+// Setup flags newer than some kernel headers; define them (stable ABI values).
+#ifndef IORING_SETUP_SUBMIT_ALL
+#define IORING_SETUP_SUBMIT_ALL (1U << 7)
+#endif
+#ifndef IORING_SETUP_COOP_TASKRUN
+#define IORING_SETUP_COOP_TASKRUN (1U << 8)
+#endif
+#ifndef IORING_SETUP_TASKRUN_FLAG
+#define IORING_SETUP_TASKRUN_FLAG (1U << 9)
+#endif
+#ifndef IORING_SETUP_SINGLE_ISSUER
+#define IORING_SETUP_SINGLE_ISSUER (1U << 12)
+#endif
+#ifndef IORING_SETUP_DEFER_TASKRUN
+#define IORING_SETUP_DEFER_TASKRUN (1U << 13)
+#endif
 #ifndef IORING_SETUP_NO_SQARRAY
 #define IORING_SETUP_NO_SQARRAY (1U << 16)
+#endif
+#ifndef IOSQE_CQE_SKIP_SUCCESS
+#define IOSQE_CQE_SKIP_SUCCESS (1U << 6)
+#endif
+#ifndef IORING_FEAT_CQE_SKIP
+#define IORING_FEAT_CQE_SKIP (1U << 11)
 #endif
 
 // CAPIO's own io_uring ring: CAPIO owns and lays out the two mmap regions, and
@@ -163,10 +185,15 @@ inline bool uring_layout(CapioRing &ring, io_uring_params *params) {
     return true;
 }
 
-// Per-process table of rings, keyed by the fake fd returned from setup.
+// Per-process table of rings, keyed by the fake fd returned from setup. Every
+// mmap/munmap in the process consults it, so it is locked; recursive because the
+// handlers' own libc calls (mmap in uring_layout) re-enter the hook. Entries are
+// stable across inserts, so a looked-up ring stays valid until it is closed.
 inline std::unordered_map<int, CapioRing> *capio_rings;
+inline std::recursive_mutex capio_rings_mutex;
 
 inline CapioRing *get_capio_ring(int fd) {
+    const std::lock_guard<std::recursive_mutex> lock(capio_rings_mutex);
     if (capio_rings == nullptr) {
         return nullptr;
     }
@@ -187,6 +214,7 @@ inline void destroy_capio_ring(CapioRing &ring) {
 }
 
 inline bool destroy_capio_ring(int fd) {
+    const std::lock_guard<std::recursive_mutex> lock(capio_rings_mutex);
     if (capio_rings == nullptr) {
         return false;
     }
