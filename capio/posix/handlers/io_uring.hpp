@@ -21,6 +21,11 @@
  * them; the ring's emulated mmap lives in mmap.hpp, keyed off the fake fd.
  */
 
+// DRAIN and ASYNC hold trivially when SQEs run in order, synchronously; links
+// and CQE_SKIP_SUCCESS are honoured in the drain loop.
+static constexpr uint8_t kUringSupportedSqeFlags =
+    IOSQE_IO_DRAIN | IOSQE_IO_LINK | IOSQE_IO_HARDLINK | IOSQE_ASYNC | IOSQE_CQE_SKIP_SUCCESS;
+
 // Logged so the emulated setup knows which flags real workloads request.
 // Only the ones that change what liburing does with the ring are named here.
 static const char *uring_setup_flags_str(unsigned flags) {
@@ -50,20 +55,37 @@ static const char *uring_setup_flags_str(unsigned flags) {
     return buf;
 }
 
-// Next power of two >= n, for at least 1. liburing requires power-of-two entries.
-// Return false when n is unsupported to avoid shift overflow.
-static bool uring_roundup_pow2(uint32_t n, uint32_t &out) {
-    static constexpr uint32_t kMaxSqEntries = 1u << 30;
-    if (n == 0 || n > kMaxSqEntries) {
+// Kernel limits (IORING_MAX_ENTRIES / IORING_MAX_CQ_ENTRIES).
+static constexpr uint32_t kUringMaxSqEntries = 32768;
+static constexpr uint32_t kUringMaxCqEntries = 2 * kUringMaxSqEntries;
+
+// Next power of two >= n, as the kernel requires: above max it clamps with
+// IORING_SETUP_CLAMP and fails otherwise.
+static bool uring_entries(uint32_t n, uint32_t max, bool clamp, uint32_t &out) {
+    if (n == 0 || (n > max && !clamp)) {
         return false;
     }
-
+    n          = std::min(n, max);
     uint32_t p = 1;
     while (p < n) {
         p <<= 1;
     }
     out = p;
     return true;
+}
+
+// Sizes the ring as the kernel does: CQ is 2x SQ unless CQSIZE asks for more.
+static bool uring_ring_sizes(uint32_t entries, const io_uring_params *params, CapioRing &ring) {
+    const bool clamp = params->flags & IORING_SETUP_CLAMP;
+    if (!uring_entries(entries, kUringMaxSqEntries, clamp, ring.sq_entries)) {
+        return false;
+    }
+    if (!(params->flags & IORING_SETUP_CQSIZE)) {
+        ring.cq_entries = ring.sq_entries * 2;
+        return true;
+    }
+    return uring_entries(params->cq_entries, kUringMaxCqEntries, clamp, ring.cq_entries) &&
+           ring.cq_entries >= ring.sq_entries;
 }
 
 #ifdef SYS_io_uring_setup
@@ -83,12 +105,20 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
     LOG("io_uring_setup requested: entries=%u flags=0x%x [%s]", entries, params->flags,
         uring_setup_flags_str(params->flags));
 
-    // Allowlist, not denylist: NO_SQARRAY is a no-op for us (the drain reads
-    // sqes[head & mask] directly), so accept it; reject every other flag with
-    // -EINVAL (they change geometry, the mmap mechanism, or require real async).
-    constexpr unsigned kSupportedFlags = IORING_SETUP_NO_SQARRAY;
-    if (params->flags & ~kSupportedFlags) {
-        LOG("rejecting unsupported setup flags: 0x%x", params->flags & ~kSupportedFlags);
+    // Allowlist: these flags only tune kernel task_work or completion batching,
+    // which synchronous execution already satisfies. The rest change geometry
+    // or the mmap mechanism, or need real async, so they fail with -EINVAL.
+    constexpr unsigned kSupportedFlags = IORING_SETUP_NO_SQARRAY | IORING_SETUP_CQSIZE |
+                                         IORING_SETUP_CLAMP | IORING_SETUP_SUBMIT_ALL |
+                                         IORING_SETUP_COOP_TASKRUN | IORING_SETUP_TASKRUN_FLAG |
+                                         IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN;
+    const unsigned flags = params->flags;
+    const bool bad_combination =
+        ((flags & IORING_SETUP_DEFER_TASKRUN) && !(flags & IORING_SETUP_SINGLE_ISSUER)) ||
+        ((flags & IORING_SETUP_TASKRUN_FLAG) &&
+         !(flags & (IORING_SETUP_COOP_TASKRUN | IORING_SETUP_DEFER_TASKRUN)));
+    if ((flags & ~kSupportedFlags) || bad_combination) {
+        LOG("rejecting setup flags: 0x%x", flags);
         errno   = EINVAL;
         *result = -errno;
         return CAPIO_POSIX_SYSCALL_SUCCESS;
@@ -98,27 +128,30 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
     // it names /dev/null, never a real ring. The ring lives in CapioRing.
     int fake_fd =
         static_cast<int>(syscall_no_intercept(SYS_openat, AT_FDCWD, "/dev/null", O_RDONLY, 0));
-    if (fake_fd == -1) {
+    if (fake_fd < 0) {
         ERR_EXIT("io_uring_setup: unable to open /dev/null for fake ring fd");
     }
 
+    const std::lock_guard<std::recursive_mutex> lock(capio_rings_mutex);
     if (capio_rings == nullptr) {
         capio_rings = new std::unordered_map<int, CapioRing>();
     }
     CapioRing &ring = (*capio_rings)[fake_fd];
     ring.fake_fd    = fake_fd;
-    if (!uring_roundup_pow2(entries, ring.sq_entries)) {
+    if (!uring_ring_sizes(entries, params, ring)) {
         capio_rings->erase(fake_fd);
         syscall_no_intercept(SYS_close, fake_fd);
         errno   = EINVAL;
         *result = -errno;
         return CAPIO_POSIX_SYSCALL_SUCCESS;
     }
-    ring.cq_entries = ring.sq_entries * 2; // 2x so CQ overflow never needs handling
 
     params->sq_entries = ring.sq_entries;
     params->cq_entries = ring.cq_entries;
-    params->features   = IORING_FEAT_SINGLE_MMAP;
+    // Only what synchronous execution makes true: SQE data is consumed at submit,
+    // off == -1 uses the file position, and CQE_SKIP_SUCCESS is honoured.
+    params->features   = IORING_FEAT_SINGLE_MMAP | IORING_FEAT_SUBMIT_STABLE |
+                       IORING_FEAT_RW_CUR_POS | IORING_FEAT_CQE_SKIP;
 
     if (!uring_layout(ring, params)) {
         capio_rings->erase(fake_fd);
@@ -135,47 +168,52 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
 }
 #endif // SYS_io_uring_setup
 
-// A non-CAPIO fd sharing the ring: run it synchronously against the real kernel
-// and report its real result. This preserves correctness for mixed rings; the
-// MVP does not overlap these with async, which is a documented performance
-// limitation, not a correctness one. Uses the p{read,write} form so the SQE's
-// explicit offset is honoured without a separate seek.
-static int32_t uring_passthrough_rw(const io_uring_sqe *sqe, bool is_write) {
-    long r = -1;
-    if (sqe->off == static_cast<uint64_t>(-1)) {
-        long syscall_no = is_write ? SYS_write : SYS_read;
-        r               = syscall_no_intercept(syscall_no, sqe->fd, sqe->addr, sqe->len);
-    } else {
-        long syscall_no = is_write ? SYS_pwrite64 : SYS_pread64;
-        off64_t off     = static_cast<off64_t>(sqe->off);
-        r               = syscall_no_intercept(syscall_no, sqe->fd, sqe->addr, sqe->len, off);
-    }
-    return static_cast<int32_t>(r < 0 ? -errno : r);
+// A non-CAPIO fd sharing the ring runs synchronously against the kernel and
+// reports its real result. preadv2/pwritev2 take off == -1 as "current
+// position" and honour the SQE's RWF_* flags, so one call covers every case.
+static int32_t uring_passthrough_rw(const io_uring_sqe *sqe, const iovec *iov, int iovcnt,
+                                    bool is_write) {
+    long r = syscall_no_intercept(is_write ? SYS_pwritev2 : SYS_preadv2, sqe->fd, iov, iovcnt,
+                                  static_cast<long>(sqe->off), 0L, sqe->rw_flags);
+    return static_cast<int32_t>(r); // raw result: already -errno on failure
 }
 
-static int32_t uring_capio_rw(const io_uring_sqe *sqe, bool is_write, long tid) {
+static int32_t uring_result(off64_t res) {
+    return static_cast<int32_t>(res == CAPIO_POSIX_SYSCALL_ERRNO ? -errno : res);
+}
+
+// capio_readv/capio_writev start at the descriptor's position, so an explicit
+// offset seeks there first (which also flushes the caches and syncs the server)
+// and seeks back afterwards, leaving the position as io_uring does.
+static int32_t uring_capio_rw(const io_uring_sqe *sqe, const iovec *iov, int iovcnt, bool is_write,
+                              long tid) {
+    START_LOG(tid, "call(fd=%d, off=%lld, iovcnt=%d, is_write=%d)", sqe->fd,
+              static_cast<long long>(sqe->off), iovcnt, is_write);
+    auto transfer = [&]() {
+        return uring_result(is_write ? capio_writev(sqe->fd, iov, iovcnt, tid)
+                                     : capio_readv(sqe->fd, iov, iovcnt, tid));
+    };
     if (sqe->off == static_cast<uint64_t>(-1)) {
-        return static_cast<int32_t>(
-            is_write
-                ? capio_write(sqe->fd, reinterpret_cast<const void *>(sqe->addr), sqe->len, tid)
-                : capio_read(sqe->fd, reinterpret_cast<void *>(sqe->addr), sqe->len, tid));
+        return transfer();
     }
 
     off64_t saved = get_capio_fd_offset(sqe->fd);
-    // Seeking also flushes the caches and synchronizes the server's offset.
     if (capio_lseek(sqe->fd, static_cast<off64_t>(sqe->off), SEEK_SET, tid) < 0) {
         return -errno;
     }
-    auto res = static_cast<int32_t>(
-        is_write ? capio_write(sqe->fd, reinterpret_cast<const void *>(sqe->addr), sqe->len, tid)
-                 : capio_read(sqe->fd, reinterpret_cast<void *>(sqe->addr), sqe->len, tid));
-    if (res == CAPIO_POSIX_SYSCALL_ERRNO) {
-        res = -errno;
-    }
+    int32_t res = transfer();
     if (capio_lseek(sqe->fd, saved, SEEK_SET, tid) < 0) {
-        return -errno;
+        LOG("could not restore offset %ld on fd %d", saved, sqe->fd); // res still stands
     }
     return res;
+}
+
+static int32_t uring_rw(const io_uring_sqe *sqe, bool vectored, bool is_write, long tid) {
+    iovec single{reinterpret_cast<void *>(sqe->addr), sqe->len};
+    const auto *iov  = vectored ? reinterpret_cast<const iovec *>(sqe->addr) : &single;
+    const int iovcnt = vectored ? static_cast<int>(sqe->len) : 1;
+    return exists_capio_fd(sqe->fd) ? uring_capio_rw(sqe, iov, iovcnt, is_write, tid)
+                                    : uring_passthrough_rw(sqe, iov, iovcnt, is_write);
 }
 
 // Serve one SQE and produce its completion result (bytes transferred, or -errno
@@ -186,6 +224,13 @@ static int32_t uring_dispatch_sqe(const io_uring_sqe *sqe, long tid) {
     START_LOG(tid, "call(opcode=%u, fd=%d, user_data=%llu)", sqe->opcode, sqe->fd,
               (unsigned long long) sqe->user_data);
 
+    if (sqe->flags & IOSQE_FIXED_FILE) {
+        return -EBADF; // io_uring_register is refused, so no file is ever registered
+    }
+    if (sqe->flags & ~kUringSupportedSqeFlags) {
+        return -EINVAL;
+    }
+
     switch (sqe->opcode) {
     case IORING_OP_NOP:
         return 0;
@@ -195,29 +240,44 @@ static int32_t uring_dispatch_sqe(const io_uring_sqe *sqe, long tid) {
             // Durability for CAPIO-owned fds is handled by CAPIO commit rules.
             return 0;
         }
-        if (syscall_no_intercept((sqe->fsync_flags & IORING_FSYNC_DATASYNC) ? SYS_fdatasync
-                                                                            : SYS_fsync,
-                                 sqe->fd) < 0) {
-            return -errno;
-        }
-        return 0;
+        return static_cast<int32_t>(std::min(
+            syscall_no_intercept(
+                (sqe->fsync_flags & IORING_FSYNC_DATASYNC) ? SYS_fdatasync : SYS_fsync, sqe->fd),
+            0L));
 
     case IORING_OP_WRITE:
-        if (!exists_capio_fd(sqe->fd)) {
-            return uring_passthrough_rw(sqe, true);
-        }
-        return uring_capio_rw(sqe, true, tid);
-
+        return uring_rw(sqe, false, true, tid);
     case IORING_OP_READ:
-        if (!exists_capio_fd(sqe->fd)) {
-            return uring_passthrough_rw(sqe, false);
-        }
-        return uring_capio_rw(sqe, false, tid);
+        return uring_rw(sqe, false, false, tid);
+    case IORING_OP_WRITEV:
+        return uring_rw(sqe, true, true, tid);
+    case IORING_OP_READV:
+        return uring_rw(sqe, true, false, tid);
 
     default:
         LOG("opcode %u not implemented yet", sqe->opcode);
         return -EINVAL;
     }
+}
+
+// A linked SQE fails its chain on an error or, for reads/writes, a short
+// transfer (as the kernel does); later members complete with -ECANCELED.
+static bool uring_breaks_link(const io_uring_sqe *sqe, int32_t res) {
+    if (res < 0) {
+        return true;
+    }
+    if (sqe->opcode == IORING_OP_READ || sqe->opcode == IORING_OP_WRITE) {
+        return static_cast<uint32_t>(res) < sqe->len;
+    }
+    if (sqe->opcode == IORING_OP_READV || sqe->opcode == IORING_OP_WRITEV) {
+        const auto *iov = reinterpret_cast<const iovec *>(sqe->addr);
+        size_t total    = 0;
+        for (uint32_t i = 0; i < sqe->len; ++i) {
+            total += iov[i].iov_len;
+        }
+        return static_cast<size_t>(res) < total;
+    }
+    return false;
 }
 
 static uint32_t uring_cq_ready(const CapioRing &ring) {
@@ -278,10 +338,20 @@ int io_uring_enter_handler(long arg0, long arg1, long arg2, long arg3, long arg4
     uint32_t available = tail - head;
     uint32_t wanted    = std::min<uint32_t>(to_submit, available);
     uint32_t submitted = 0;
+    bool chain_failed  = false; // a chain never spans two io_uring_enter calls
     while (submitted < wanted && uring_cq_has_space(*ring)) {
         const io_uring_sqe *sqe = &ring->sqes[head & *ring->sq_mask];
-        int32_t res             = uring_dispatch_sqe(sqe, tid);
-        uring_post_cqe(*ring, sqe->user_data, res);
+        const uint8_t sqe_flags = sqe->flags;
+        int32_t res             = chain_failed ? -ECANCELED : uring_dispatch_sqe(sqe, tid);
+        if (!chain_failed && (sqe_flags & IOSQE_IO_LINK) && uring_breaks_link(sqe, res)) {
+            chain_failed = true;
+        }
+        if (!(sqe_flags & (IOSQE_IO_LINK | IOSQE_IO_HARDLINK))) {
+            chain_failed = false;
+        }
+        if (!((sqe_flags & IOSQE_CQE_SKIP_SUCCESS) && res >= 0)) {
+            uring_post_cqe(*ring, sqe->user_data, res);
+        }
         ++head;
         ++submitted;
     }
