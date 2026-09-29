@@ -138,6 +138,7 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
     }
     CapioRing &ring = (*capio_rings)[fake_fd];
     ring.fake_fd    = fake_fd;
+    ring.no_sqarray = flags & IORING_SETUP_NO_SQARRAY;
     if (!uring_ring_sizes(entries, params, ring)) {
         capio_rings->erase(fake_fd);
         syscall_no_intercept(SYS_close, fake_fd);
@@ -330,9 +331,10 @@ int io_uring_enter_handler(long arg0, long arg1, long arg2, long arg3, long arg4
         return CAPIO_POSIX_SYSCALL_SKIP; // not a CAPIO ring: kernel handles it
     }
 
-    // Drain to_submit SQEs. io_uring_submit already advanced the SQ tail in CAPIO
-    // memory; with NO_SQARRAY the SQEs sit in ring order, so sqes[i & mask] is the
-    // i-th. Synchronous processing is valid -- io_uring does not guarantee async.
+    // Drain to_submit SQEs. The app already advanced the SQ tail in CAPIO memory.
+    // With NO_SQARRAY the SQEs sit in ring order; otherwise sq_array names each
+    // one (liburing fills it 1:1, other apps such as fio do not). Synchronous
+    // processing is valid -- io_uring does not guarantee async.
     uint32_t head      = *ring->sq_head;
     uint32_t tail      = __atomic_load_n(ring->sq_tail, __ATOMIC_ACQUIRE);
     uint32_t available = tail - head;
@@ -340,7 +342,14 @@ int io_uring_enter_handler(long arg0, long arg1, long arg2, long arg3, long arg4
     uint32_t submitted = 0;
     bool chain_failed  = false; // a chain never spans two io_uring_enter calls
     while (submitted < wanted && uring_cq_has_space(*ring)) {
-        const io_uring_sqe *sqe = &ring->sqes[head & *ring->sq_mask];
+        const uint32_t slot = head & *ring->sq_mask;
+        const uint32_t idx  = ring->no_sqarray ? slot : ring->sq_array[slot];
+        if (idx >= ring->sq_entries) { // invalid index: dropped, as the kernel does
+            ++*ring->sq_dropped;
+            ++head;
+            break;
+        }
+        const io_uring_sqe *sqe = &ring->sqes[idx];
         const uint8_t sqe_flags = sqe->flags;
         int32_t res             = chain_failed ? -ECANCELED : uring_dispatch_sqe(sqe, tid);
         if (!chain_failed && (sqe_flags & IOSQE_IO_LINK) && uring_breaks_link(sqe, res)) {
