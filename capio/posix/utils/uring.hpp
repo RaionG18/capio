@@ -48,6 +48,7 @@ struct CapioRing {
     int fake_fd;
     uint32_t sq_entries;
     uint32_t cq_entries;
+    bool no_sqarray = false; // SQEs in ring order; otherwise sq_array holds their indices
 
     // The two mmap regions, owned here.
     void *sq_ring       = nullptr; // IORING_OFF_SQ_RING: rings + sq array + cqes
