@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <linux/io_uring.h>
-#include <time.h>
 
 #include "utils/common.hpp"
 #include "utils/filesystem.hpp"
@@ -25,35 +24,6 @@
 // and CQE_SKIP_SUCCESS are honoured in the drain loop.
 static constexpr uint8_t kUringSupportedSqeFlags =
     IOSQE_IO_DRAIN | IOSQE_IO_LINK | IOSQE_IO_HARDLINK | IOSQE_ASYNC | IOSQE_CQE_SKIP_SUCCESS;
-
-// Logged so the emulated setup knows which flags real workloads request.
-// Only the ones that change what liburing does with the ring are named here.
-static const char *uring_setup_flags_str(unsigned flags) {
-    static thread_local char buf[256];
-    buf[0] = '\0';
-
-    struct {
-        unsigned bit;
-        const char *name;
-    } static constexpr kFlags[] = {
-        {IORING_SETUP_IOPOLL, "IOPOLL"}, {IORING_SETUP_SQPOLL, "SQPOLL"},
-        {IORING_SETUP_SQ_AFF, "SQ_AFF"}, {IORING_SETUP_CQSIZE, "CQSIZE"},
-        {IORING_SETUP_CLAMP, "CLAMP"},   {IORING_SETUP_ATTACH_WQ, "ATTACH_WQ"},
-    };
-
-    for (const auto &f : kFlags) {
-        if (flags & f.bit) {
-            if (buf[0] != '\0') {
-                strncat(buf, "|", sizeof buf - strlen(buf) - 1);
-            }
-            strncat(buf, f.name, sizeof buf - strlen(buf) - 1);
-        }
-    }
-    if (buf[0] == '\0') {
-        strncpy(buf, "none", sizeof buf - 1);
-    }
-    return buf;
-}
 
 // Kernel limits (IORING_MAX_ENTRIES / IORING_MAX_CQ_ENTRIES).
 static constexpr uint32_t kUringMaxSqEntries = 32768;
@@ -102,9 +72,6 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
         return CAPIO_POSIX_SYSCALL_SUCCESS;
     }
 
-    LOG("io_uring_setup requested: entries=%u flags=0x%x [%s]", entries, params->flags,
-        uring_setup_flags_str(params->flags));
-
     // Allowlist: these flags only tune kernel task_work or completion batching,
     // which synchronous execution already satisfies. The rest change geometry
     // or the mmap mechanism, or need real async, so they fail with -EINVAL.
@@ -137,7 +104,6 @@ int io_uring_setup_handler(long arg0, long arg1, long arg2, long arg3, long arg4
         capio_rings = new std::unordered_map<int, CapioRing>();
     }
     CapioRing &ring = (*capio_rings)[fake_fd];
-    ring.fake_fd    = fake_fd;
     ring.no_sqarray = flags & IORING_SETUP_NO_SQARRAY;
     if (!uring_ring_sizes(entries, params, ring)) {
         capio_rings->erase(fake_fd);
@@ -302,19 +268,6 @@ static void uring_post_cqe(CapioRing &ring, uint64_t user_data, int32_t res) {
     __atomic_store_n(ring.cq_tail, tail + 1, __ATOMIC_RELEASE);
 }
 
-// min_complete is already met: the synchronous drain posted every completion
-// before this runs, so there is nothing to wait for. Cap the requirement at CQ
-// capacity so an over-large min_complete is satisfiable, not a spin.
-// PONYTAIL (synchronous only): F5's async poster must make this a real blocking
-// wait on a semaphore it signals (like Queue's _sem_num_elems), never a sleep.
-static bool uring_min_complete_satisfied(const CapioRing &ring, unsigned min_complete) {
-    if (min_complete == 0) {
-        return true;
-    }
-    unsigned reachable = std::min<unsigned>(min_complete, *ring.cq_ring_entries);
-    return uring_cq_ready(ring) >= reachable;
-}
-
 #ifdef SYS_io_uring_enter
 int io_uring_enter_handler(long arg0, long arg1, long arg2, long arg3, long arg4, long arg5,
                            long *result) {
@@ -373,14 +326,8 @@ int io_uring_enter_handler(long arg0, long arg1, long arg2, long arg3, long arg4
         return CAPIO_POSIX_SYSCALL_SUCCESS;
     }
 
-    // Synchronous processing already posted every completion this call can
-    // produce, so the min_complete contract holds without any wait. If it does
-    // not, an assumption broke (the drain and the contract disagree) -- surface
-    // it instead of masking it with a spin.
-    if (!uring_min_complete_satisfied(*ring, min_complete)) {
-        LOG("io_uring_enter: min_complete=%u unmet after synchronous drain (ready=%u)",
-            min_complete, uring_cq_ready(*ring));
-    }
+    // min_complete needs no wait: every completion was posted above. An async
+    // executor (F5) must turn this into a real wait, e.g. Queue's _sem_num_elems.
     LOG("io_uring_enter: served %u SQEs synchronously (min_complete=%u, requested_submit=%u)",
         submitted, min_complete, to_submit);
 
@@ -398,15 +345,11 @@ int io_uring_register_handler(long arg0, long arg1, long arg2, long arg3, long a
     long tid     = syscall_no_intercept(SYS_gettid);
     START_LOG(tid, "call(ring_fd=%d, opcode=%u, nr_args=%u)", ring_fd, opcode, nr_args);
 
-    // Registration is out of scope for the MVP; logging it shows whether real
-    // workloads depend on it (fixed buffers/files) before it is refused.
-    LOG("io_uring_register: ring_fd=%d opcode=%u nr_args=%u", ring_fd, opcode, nr_args);
-
     if (get_capio_ring(ring_fd) == nullptr) {
         return CAPIO_POSIX_SYSCALL_SKIP;
     }
 
-    errno   = EOPNOTSUPP;
+    errno   = EOPNOTSUPP; // fixed files/buffers are out of scope
     *result = -errno;
     return CAPIO_POSIX_SYSCALL_SUCCESS;
 }
