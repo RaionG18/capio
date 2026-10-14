@@ -94,5 +94,7 @@ Every other operation, and every operation on other files, sockets or pipes, goe
 to a kernel io_uring ring that CAPIO keeps for each ring. It works as without
 CAPIO.
 
-CAPIO files cannot be registered (`io_uring_register_files`). `SQPOLL`, `IOPOLL`
-and the other setup modes that change the ring layout are not supported.
+A linked chain can use CAPIO files or other files, not both: in a chain that
+mixes them, the operations on other files fail with `EINVAL` (a `NOP` is fine). CAPIO files cannot
+be registered (`io_uring_register_files`). `SQPOLL`, `IOPOLL` and the other setup
+modes that change the ring layout are not supported.

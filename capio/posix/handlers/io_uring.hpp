@@ -10,7 +10,7 @@
 
 #include "utils/common.hpp"
 #include "utils/filesystem.hpp"
-#include "utils/uring.hpp"
+#include "utils/uring_kernel.hpp"
 
 #include "close.hpp"
 #include "lseek.hpp"
@@ -52,10 +52,6 @@ constexpr uint32_t CAPIO_URING_KERNEL_FEATURES = IORING_FEAT_CUR_PERSONALITY |
 // Kernel limits (IORING_MAX_ENTRIES / IORING_MAX_CQ_ENTRIES).
 constexpr uint32_t CAPIO_URING_MAX_SQ_ENTRIES = 32768;
 constexpr uint32_t CAPIO_URING_MAX_CQ_ENTRIES = 2 * CAPIO_URING_MAX_SQ_ENTRIES;
-
-// user_data of CAPIO's own SQEs in the kernel ring: their CQEs never reach the app.
-constexpr uint64_t CAPIO_URING_PRIVATE_USER_DATA = 0xCA910C0FFEE00001ULL;
-constexpr uint64_t CAPIO_URING_WAKE_USER_DATA    = 0xCA910C0FFEE00002ULL;
 
 // IORING_REGISTER_USE_REGISTERED_RING, defined here for older kernel headers.
 constexpr unsigned CAPIO_URING_REGISTER_USE_REGISTERED_RING = 1U << 31;
@@ -109,22 +105,15 @@ inline int capio_io_uring_setup(unsigned entries, io_uring_params *params, long 
     }
     const int ring_fd = static_cast<int>(memfd);
 
-    const std::lock_guard<std::mutex> lock(capio_rings_mutex);
-    if (capio_rings == nullptr) {
-        capio_rings = new std::unordered_map<int, CapioRing>();
-    }
-    CapioRing &ring = (*capio_rings)[ring_fd];
-    ring.no_sqarray = flags & IORING_SETUP_NO_SQARRAY;
-    long res        = uring_ring_sizes(entries, params, ring) ? 0 : -EINVAL;
+    auto ring        = std::make_shared<CapioRing>();
+    ring->no_sqarray = flags & IORING_SETUP_NO_SQARRAY;
+    long res         = uring_ring_sizes(entries, params, *ring) ? 0 : -EINVAL;
     if (res == 0) {
-        params->sq_entries = ring.sq_entries;
-        params->cq_entries = ring.cq_entries;
-        res = uring_layout(ring, params, ring_fd) ? uring_kernel_setup(ring) : -ENOMEM;
+        params->sq_entries = ring->sq_entries;
+        params->cq_entries = ring->cq_entries;
+        res = uring_layout(*ring, params, ring_fd) ? uring_kernel_setup(*ring) : -ENOMEM;
     }
     if (res < 0) {
-        uring_unmap(ring);
-        uring_kernel_destroy(ring.kernel);
-        capio_rings->erase(ring_fd);
         syscall_no_intercept(SYS_close, ring_fd);
         errno = static_cast<int>(-res);
         return CAPIO_POSIX_SYSCALL_ERRNO;
@@ -132,11 +121,11 @@ inline int capio_io_uring_setup(unsigned entries, io_uring_params *params, long 
 
     // No SINGLE_MMAP: the SQ and CQ are separate memfd regions.
     params->features = IORING_FEAT_SUBMIT_STABLE | IORING_FEAT_RW_CUR_POS | IORING_FEAT_CQE_SKIP |
-                       (ring.kernel.features & CAPIO_URING_KERNEL_FEATURES);
+                       (ring->kernel.features & CAPIO_URING_KERNEL_FEATURES);
 
-    capio_ring_count.fetch_add(1, std::memory_order_release);
-    LOG("io_uring_setup emulated: ring_fd=%d sq_entries=%u cq_entries=%u", ring_fd, ring.sq_entries,
-        ring.cq_entries);
+    LOG("io_uring_setup emulated: ring_fd=%d sq_entries=%u cq_entries=%u", ring_fd,
+        ring->sq_entries, ring->cq_entries);
+    add_capio_ring(ring_fd, std::move(ring));
     return ring_fd;
 }
 
@@ -311,182 +300,11 @@ inline bool uring_breaks_link(const io_uring_sqe *sqe, int32_t res) {
     return false;
 }
 
-inline uint32_t uring_cq_ready(const CapioRing &ring) {
-    uint32_t head = __atomic_load_n(ring.cq_head, __ATOMIC_ACQUIRE);
-    uint32_t tail = __atomic_load_n(ring.cq_tail, __ATOMIC_ACQUIRE);
-    return tail - head;
-}
-
-inline bool uring_cq_has_space(const CapioRing &ring) {
-    return uring_cq_ready(ring) < *ring.cq_ring_entries;
-}
-
-inline void uring_write_cqe(CapioRing &ring, uint64_t user_data, int32_t res, uint32_t flags) {
-    uint32_t tail     = *ring.cq_tail;
-    io_uring_cqe &cqe = ring.cqes[tail & *ring.cq_mask];
-    cqe.user_data     = user_data;
-    cqe.res           = res;
-    cqe.flags         = flags;
-    // Release so the app sees the CQE fields before the advanced tail.
-    __atomic_store_n(ring.cq_tail, tail + 1, __ATOMIC_RELEASE);
-}
-
-// While the CQ is full, CQEs wait in the overflow list, in order, as in the kernel.
-inline void uring_post_cqe(CapioRing &ring, uint64_t user_data, int32_t res, uint32_t flags = 0) {
-    if (!ring.overflow.empty() || !uring_cq_has_space(ring)) {
-        ring.overflow.push_back(io_uring_cqe{user_data, res, flags});
-        return;
-    }
-    uring_write_cqe(ring, user_data, res, flags);
-}
-
 // The kernel ring signals the eventfd for its own CQEs; CAPIO does it for its own.
 inline void uring_signal_eventfd(const CapioRing &ring) {
     if (ring.eventfd >= 0 && !ring.eventfd_async) {
         const uint64_t one = 1;
         syscall_no_intercept(SYS_write, ring.eventfd, &one, sizeof(one));
-    }
-}
-
-// IORING_SQ_CQ_OVERFLOW while kernel work is in flight: liburing then calls
-// io_uring_enter when its CQ looks empty, and enter collects the kernel CQEs.
-inline void uring_update_enter_hint(CapioRing &ring) {
-    const KernelRing &k = ring.kernel;
-    if (k.inflight > 0 || !ring.overflow.empty() ||
-        *k.cq_head != __atomic_load_n(k.cq_tail, __ATOMIC_ACQUIRE)) {
-        __atomic_fetch_or(ring.sq_flags, IORING_SQ_CQ_OVERFLOW, __ATOMIC_RELEASE);
-    } else {
-        __atomic_fetch_and(ring.sq_flags, ~IORING_SQ_CQ_OVERFLOW, __ATOMIC_RELEASE);
-    }
-}
-
-inline void uring_collect(CapioRing &ring) {
-    while (!ring.overflow.empty() && uring_cq_has_space(ring)) {
-        const io_uring_cqe cqe = ring.overflow.front();
-        ring.overflow.pop_front();
-        uring_write_cqe(ring, cqe.user_data, cqe.res, cqe.flags);
-    }
-    KernelRing &k       = ring.kernel;
-    uint32_t head       = *k.cq_head;
-    const uint32_t tail = __atomic_load_n(k.cq_tail, __ATOMIC_ACQUIRE);
-    while (head != tail) {
-        const io_uring_cqe &cqe = k.cqes[head & *k.cq_mask];
-        if (cqe.user_data == CAPIO_URING_PRIVATE_USER_DATA) {
-            k.private_res  = cqe.res;
-            k.private_done = true;
-        } else if (cqe.user_data != CAPIO_URING_WAKE_USER_DATA) {
-            uring_post_cqe(ring, cqe.user_data, cqe.res, cqe.flags);
-        }
-        if (!(cqe.flags & IORING_CQE_F_MORE) && k.inflight > 0) {
-            --k.inflight;
-        }
-        ++head;
-    }
-    __atomic_store_n(k.cq_head, head, __ATOMIC_RELEASE);
-    uring_update_enter_hint(ring);
-}
-
-inline void uring_kernel_flush(CapioRing &ring) {
-    KernelRing &k = ring.kernel;
-    for (int tries = 0; k.pending > 0 && tries < 1000; ++tries) {
-        const long r = syscall_no_intercept(SYS_io_uring_enter, k.fd, k.pending, 0, 0, nullptr, 0);
-        if (r > 0) {
-            k.pending -= static_cast<uint32_t>(r);
-        } else if (r == -EINTR) {
-            continue;
-        } else if (r == -EAGAIN || r == -EBUSY) {
-            uring_collect(ring);
-            syscall_no_intercept(SYS_io_uring_enter, k.fd, 0, 1, IORING_ENTER_GETEVENTS, nullptr,
-                                 0);
-        } else {
-            const int32_t err   = r == 0 ? -EAGAIN : static_cast<int32_t>(r);
-            const uint32_t head = __atomic_load_n(k.sq_head, __ATOMIC_ACQUIRE);
-            for (uint32_t h = head; h != *k.sq_tail; ++h) {
-                const io_uring_sqe &sqe = k.sqes[k.sq_array[h & *k.sq_mask]];
-                if (!(sqe.flags & IOSQE_CQE_SKIP_SUCCESS) && k.inflight > 0) {
-                    --k.inflight;
-                }
-                if (sqe.user_data == CAPIO_URING_PRIVATE_USER_DATA) {
-                    k.private_res  = err;
-                    k.private_done = true;
-                } else if (sqe.user_data != CAPIO_URING_WAKE_USER_DATA) {
-                    uring_post_cqe(ring, sqe.user_data, err);
-                }
-            }
-            __atomic_store_n(k.sq_tail, head, __ATOMIC_RELEASE);
-            k.pending = 0;
-        }
-    }
-}
-
-// An SQE with CQE_SKIP_SUCCESS may post no CQE, so it does not count as in flight.
-inline void uring_kernel_queue(CapioRing &ring, const io_uring_sqe &sqe) {
-    KernelRing &k = ring.kernel;
-    if (*k.sq_tail - __atomic_load_n(k.sq_head, __ATOMIC_ACQUIRE) == k.sq_entries) {
-        uring_kernel_flush(ring);
-    }
-    const uint32_t tail = *k.sq_tail;
-    const uint32_t slot = tail & *k.sq_mask;
-    k.sqes[slot]        = sqe;
-    k.sq_array[slot]    = slot;
-    __atomic_store_n(k.sq_tail, tail + 1, __ATOMIC_RELEASE);
-    ++k.pending;
-    if (!(sqe.flags & IOSQE_CQE_SKIP_SUCCESS)) {
-        ++k.inflight;
-    }
-}
-
-// Every wait is in the kernel ring; a thread that posts CAPIO CQEs ends it with a NOP.
-inline void uring_wake_waiters(CapioRing &ring) {
-    if (ring.waiters > 0) {
-        io_uring_sqe nop{};
-        nop.opcode    = IORING_OP_NOP;
-        nop.user_data = CAPIO_URING_WAKE_USER_DATA;
-        uring_kernel_queue(ring, nop);
-        uring_kernel_flush(ring);
-    }
-}
-
-struct UringWaitArg {
-    unsigned flags  = 0;
-    const void *arg = nullptr;
-    size_t size     = 0;
-};
-
-inline long uring_kernel_wait(CapioRing &ring, std::unique_lock<std::mutex> &lock,
-                              const UringWaitArg &wait = {}) {
-    ++ring.waiters;
-    lock.unlock();
-    const long r = syscall_no_intercept(SYS_io_uring_enter, ring.kernel.fd, 0, 1,
-                                        IORING_ENTER_GETEVENTS | wait.flags, wait.arg, wait.size);
-    lock.lock();
-    --ring.waiters;
-    return r;
-}
-
-inline int32_t uring_kernel_run(CapioRing &ring, const io_uring_sqe &sqe,
-                                std::unique_lock<std::mutex> &lock) {
-    io_uring_sqe copy = sqe;
-    copy.flags &= ~(IOSQE_IO_LINK | IOSQE_IO_HARDLINK | IOSQE_CQE_SKIP_SUCCESS);
-    copy.user_data = CAPIO_URING_PRIVATE_USER_DATA;
-    KernelRing &k  = ring.kernel;
-    k.private_done = false;
-    uring_kernel_queue(ring, copy);
-    uring_kernel_flush(ring);
-    for (uring_collect(ring); !k.private_done; uring_collect(ring)) {
-        const long r = uring_kernel_wait(ring, lock);
-        if (r < 0 && r != -EINTR && r != -EAGAIN && r != -EBUSY) {
-            return static_cast<int32_t>(r);
-        }
-    }
-    return k.private_res;
-}
-
-// CAPIO's SQEs are already complete: IOSQE_IO_DRAIN waits for kernel SQEs only.
-inline void uring_drain(CapioRing &ring, std::unique_lock<std::mutex> &lock) {
-    uring_kernel_flush(ring);
-    for (uring_collect(ring); ring.kernel.inflight > 0; uring_collect(ring)) {
-        uring_kernel_wait(ring, lock);
     }
 }
 
@@ -496,9 +314,9 @@ inline const io_uring_sqe *uring_sqe_at(const CapioRing &ring, uint32_t pos) {
     return idx < ring.sq_entries ? &ring.sqes[idx] : nullptr;
 }
 
-// Kernel members of a CAPIO chain run one at a time, so the chain keeps its order.
-inline bool uring_run_chain(CapioRing &ring, uint32_t head, uint32_t count, long tid,
-                            std::unique_lock<std::mutex> &lock) {
+// A chain that mixes CAPIO and kernel SQEs is not supported: its kernel members
+// fail with EINVAL. A single SQE that CAPIO leaves goes to the kernel ring.
+inline bool uring_run_chain(CapioRing &ring, uint32_t head, uint32_t count, long tid) {
     bool chain_failed = false;
     bool posted       = false;
     for (uint32_t i = 0; i < count; ++i) {
@@ -506,8 +324,14 @@ inline bool uring_run_chain(CapioRing &ring, uint32_t head, uint32_t count, long
         int32_t res            = 0;
         if (chain_failed || sqe.opcode == IORING_OP_LINK_TIMEOUT) {
             res = -ECANCELED;
+        } else if (sqe.opcode == IORING_OP_NOP) {
+            res = 0; // no side effect: completed here, in chain order
         } else if (!uring_for_capio(&sqe) || !uring_capio_exec(&sqe, tid, res)) {
-            res = uring_kernel_run(ring, sqe, lock);
+            if (count == 1) {
+                uring_kernel_queue(ring, sqe);
+                continue;
+            }
+            res = -EINVAL;
         }
         if (!chain_failed && (sqe.flags & IOSQE_IO_LINK) && uring_breaks_link(&sqe, res)) {
             chain_failed = true;
@@ -553,7 +377,7 @@ inline uint32_t uring_submit(CapioRing &ring, unsigned to_submit, long tid, bool
         }
         if (for_capio) {
             uring_kernel_flush(ring);
-            posted = uring_run_chain(ring, head, count, tid, lock) || posted;
+            posted = uring_run_chain(ring, head, count, tid) || posted;
         } else {
             for (uint32_t i = 0; i < count; ++i) {
                 uring_kernel_queue(ring, *uring_sqe_at(ring, head + i));
@@ -567,29 +391,12 @@ inline uint32_t uring_submit(CapioRing &ring, unsigned to_submit, long tid, bool
     return submitted;
 }
 
-inline long uring_wait(CapioRing &ring, unsigned min_complete, const UringWaitArg &wait,
-                       std::unique_lock<std::mutex> &lock) {
-    KernelRing &k = ring.kernel;
-    if (k.inflight > 0) {
-        syscall_no_intercept(SYS_io_uring_enter, k.fd, 0, 0, IORING_ENTER_GETEVENTS, nullptr, 0);
-    }
-    uring_collect(ring);
-    while (uring_cq_ready(ring) < min_complete && uring_cq_has_space(ring)) {
-        const long r = uring_kernel_wait(ring, lock, wait);
-        uring_collect(ring);
-        if ((r == -EINTR || r == -ETIME) && uring_cq_ready(ring) < min_complete) {
-            return r;
-        }
-    }
-    return 0;
-}
-
 inline off64_t capio_io_uring_enter(int ring_fd, unsigned to_submit, unsigned min_complete,
                                     unsigned flags, const UringWaitArg &wait, long tid) {
     START_LOG(tid, "call(ring_fd=%d, to_submit=%u, min_complete=%u, flags=0x%x)", ring_fd,
               to_submit, min_complete, flags);
 
-    CapioRing *ring = get_capio_ring(ring_fd);
+    const std::shared_ptr<CapioRing> ring = get_capio_ring(ring_fd);
     if (ring == nullptr) {
         return CAPIO_POSIX_SYSCALL_REQUEST_SKIP;
     }
@@ -641,7 +448,7 @@ inline off64_t capio_io_uring_register(int ring_fd, unsigned opcode, void *arg, 
                                        long tid) {
     START_LOG(tid, "call(ring_fd=%d, opcode=%u, nr_args=%u)", ring_fd, opcode, count);
 
-    CapioRing *ring = get_capio_ring(ring_fd);
+    const std::shared_ptr<CapioRing> ring = get_capio_ring(ring_fd);
     if (ring == nullptr) {
         return CAPIO_POSIX_SYSCALL_REQUEST_SKIP;
     }

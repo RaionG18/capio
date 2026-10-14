@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <deque>
 #include <linux/io_uring.h>
+#include <memory>
 #include <mutex>
 #include <sys/mman.h>
 #include <unordered_map>
@@ -54,11 +55,9 @@ struct KernelRing {
     uint32_t sq_entries = 0;
     uint32_t *sq_head = nullptr, *sq_tail = nullptr, *sq_mask = nullptr, *sq_array = nullptr;
     uint32_t *cq_head = nullptr, *cq_tail = nullptr, *cq_mask = nullptr;
-    io_uring_cqe *cqes  = nullptr;
-    uint32_t pending    = 0; // copied into the SQ, not yet submitted
-    uint32_t inflight   = 0; // submitted, final CQE not yet copied to the app
-    bool private_done   = false;
-    int32_t private_res = 0;
+    io_uring_cqe *cqes = nullptr;
+    uint32_t pending   = 0; // copied into the SQ, not yet submitted
+    uint32_t inflight  = 0; // submitted, final CQE not yet copied to the app
 };
 
 // CAPIO's ring: a memfd that the app maps with the kernel's mmap and CAPIO maps
@@ -77,7 +76,7 @@ struct CapioRing {
     size_t sqes_size    = 0;
 
     uint32_t *sq_head = nullptr, *sq_tail = nullptr, *sq_mask = nullptr, *sq_dropped = nullptr;
-    uint32_t *sq_flags = nullptr; // IORING_SQ_CQ_OVERFLOW hint (see io_uring.hpp)
+    uint32_t *sq_flags = nullptr; // IORING_SQ_CQ_OVERFLOW hint (see uring_kernel.hpp)
     uint32_t *sq_array = nullptr;
     uint32_t *cq_head = nullptr, *cq_tail = nullptr, *cq_mask = nullptr, *cq_ring_entries = nullptr;
     io_uring_cqe *cqes = nullptr;
@@ -88,6 +87,8 @@ struct CapioRing {
     bool eventfd_async = false;
     uint32_t waiters   = 0;
     std::mutex lock;
+
+    ~CapioRing();
 };
 
 inline size_t uring_align_up(size_t n, size_t alignment) {
@@ -257,13 +258,48 @@ inline void uring_kernel_destroy(KernelRing &k) {
     k = KernelRing{};
 }
 
+// The last reference frees the ring, so a close never unmaps it under an io_uring_enter.
+inline CapioRing::~CapioRing() {
+    uring_unmap(*this);
+    uring_kernel_destroy(kernel);
+}
+
+inline uint32_t uring_cq_ready(const CapioRing &ring) {
+    uint32_t head = __atomic_load_n(ring.cq_head, __ATOMIC_ACQUIRE);
+    uint32_t tail = __atomic_load_n(ring.cq_tail, __ATOMIC_ACQUIRE);
+    return tail - head;
+}
+
+inline bool uring_cq_has_space(const CapioRing &ring) {
+    return uring_cq_ready(ring) < *ring.cq_ring_entries;
+}
+
+inline void uring_write_cqe(CapioRing &ring, uint64_t user_data, int32_t res, uint32_t flags) {
+    uint32_t tail     = *ring.cq_tail;
+    io_uring_cqe &cqe = ring.cqes[tail & *ring.cq_mask];
+    cqe.user_data     = user_data;
+    cqe.res           = res;
+    cqe.flags         = flags;
+    // Release so the app sees the CQE fields before the advanced tail.
+    __atomic_store_n(ring.cq_tail, tail + 1, __ATOMIC_RELEASE);
+}
+
+// While the CQ is full, CQEs wait in the overflow list, in order, as in the kernel.
+inline void uring_post_cqe(CapioRing &ring, uint64_t user_data, int32_t res, uint32_t flags = 0) {
+    if (!ring.overflow.empty() || !uring_cq_has_space(ring)) {
+        ring.overflow.push_back(io_uring_cqe{user_data, res, flags});
+        return;
+    }
+    uring_write_cqe(ring, user_data, res, flags);
+}
+
 // Per-process table of rings, keyed by ring fd. close runs for every file, so a
 // process with no ring checks the ring count and never takes the lock.
-inline std::unordered_map<int, CapioRing> *capio_rings;
+inline std::unordered_map<int, std::shared_ptr<CapioRing>> *capio_rings;
 inline std::mutex capio_rings_mutex;
 inline std::atomic<int> capio_ring_count{0};
 
-inline CapioRing *get_capio_ring(int fd) {
+inline std::shared_ptr<CapioRing> get_capio_ring(int fd) {
     if (capio_ring_count.load(std::memory_order_acquire) == 0) {
         return nullptr;
     }
@@ -272,10 +308,22 @@ inline CapioRing *get_capio_ring(int fd) {
         return nullptr;
     }
     auto it = capio_rings->find(fd);
-    return it == capio_rings->end() ? nullptr : &it->second;
+    return it == capio_rings->end() ? nullptr : it->second;
+}
+
+// A stale ring left under the same fd number is replaced, not reused.
+inline void add_capio_ring(int fd, std::shared_ptr<CapioRing> ring) {
+    const std::lock_guard<std::mutex> lock(capio_rings_mutex);
+    if (capio_rings == nullptr) {
+        capio_rings = new std::unordered_map<int, std::shared_ptr<CapioRing>>();
+    }
+    if (capio_rings->insert_or_assign(fd, std::move(ring)).second) {
+        capio_ring_count.fetch_add(1, std::memory_order_release);
+    }
 }
 
 inline bool destroy_capio_ring(int fd) {
+    std::shared_ptr<CapioRing> ring; // released after the table lock
     const std::lock_guard<std::mutex> lock(capio_rings_mutex);
     if (capio_rings == nullptr) {
         return false;
@@ -285,13 +333,24 @@ inline bool destroy_capio_ring(int fd) {
         return false;
     }
 
-    uring_unmap(it->second);
-    uring_kernel_destroy(it->second.kernel);
+    ring = std::move(it->second);
     capio_rings->erase(it);
     capio_ring_count.fetch_sub(1, std::memory_order_release);
     if (capio_rings->empty()) {
         delete capio_rings;
         capio_rings = nullptr;
+    }
+    return true;
+}
+
+// Returns false when fd is not a ring.
+inline bool uring_close(int fd, long *result) {
+    if (get_capio_ring(fd) == nullptr) {
+        return false;
+    }
+    *result = capio_syscall(SYS_close, fd); // raw result: already -errno
+    if (*result == 0) {
+        destroy_capio_ring(fd);
     }
     return true;
 }
