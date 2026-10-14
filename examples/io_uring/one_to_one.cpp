@@ -33,6 +33,7 @@ struct Config {
     long long file_size  = 0;
     long long chunk_size = 0;
     int queue_depth      = 0;
+    bool current_pos     = false; // io_uring: off = -1 (current position) instead of explicit offsets
     Engine engine        = ENGINE_UNSET;
     const char *dir      = ".";
 };
@@ -52,6 +53,8 @@ static const char *prog_name = "one_to_one";
         << "  -f FILE_SIZE    Bytes per file\n"
         << "  -c CHUNK_SIZE   Bytes per read/write\n"
         << "  -q QUEUE_DEPTH  SQEs in flight (io_uring only)\n"
+        << "  -p              io_uring: off = -1 (current position), not explicit offsets.\n"
+        << "                  Needs SQEs that complete in order (CAPIO, or -q 1)\n"
         << "  -e ENGINE       Engine: posix or io_uring\n"
         << "  -d DIR          Working directory (default: .)\n"
         << "  -h              Show this help\n";
@@ -103,7 +106,7 @@ static void parse_args(int argc, char **argv, Config *cfg)
 {
     int opt;
 
-    while ((opt = getopt(argc, argv, "r:n:f:c:q:e:d:h")) != -1) {
+    while ((opt = getopt(argc, argv, "r:n:f:c:q:pe:d:h")) != -1) {
         switch (opt) {
         case 'r':
             if (strcmp(optarg, "producer") == 0) {
@@ -129,6 +132,9 @@ static void parse_args(int argc, char **argv, Config *cfg)
 
         case 'q':
             cfg->queue_depth = static_cast<int>(parse_positive(optarg, "-q"));
+            break;
+        case 'p':
+            cfg->current_pos = true;
             break;
 
         case 'e':
@@ -367,7 +373,8 @@ static uint64_t uring_write_file(UringCtx &ctx, const Config &cfg, int idx)
             io_uring_sqe *sqe = io_uring_get_sqe(&ctx.ring);
             if (!sqe)
                 die("io_uring: submission queue full");
-            io_uring_prep_write(sqe, fd, ctx.bufs[k].data(), ctx.len[k], offset);
+            io_uring_prep_write(sqe, fd, ctx.bufs[k].data(), ctx.len[k],
+                                cfg.current_pos ? static_cast<__u64>(-1) : offset);
             io_uring_sqe_set_data64(sqe, k);
             ++count;
         }
@@ -412,7 +419,8 @@ static bool uring_read_file(UringCtx &ctx, const Config &cfg, int idx)
             io_uring_sqe *sqe = io_uring_get_sqe(&ctx.ring);
             if (!sqe)
                 die("io_uring: submission queue full");
-            io_uring_prep_read(sqe, fd, ctx.bufs[k].data(), ctx.len[k], offset);
+            io_uring_prep_read(sqe, fd, ctx.bufs[k].data(), ctx.len[k],
+                               cfg.current_pos ? static_cast<__u64>(-1) : offset);
             io_uring_sqe_set_data64(sqe, k);
             ++count;
         }
