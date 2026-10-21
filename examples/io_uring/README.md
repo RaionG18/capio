@@ -57,11 +57,13 @@ how many operations io_uring keeps in flight:
 ## Run under CAPIO
 
 `capio_config.json` describes the workflow: the producer writes the files,
-the consumer reads them, and CAPIO commits each file when it is closed. Start
+the consumer reads them, and CAPIO commits each file when it is closed. The
+patterns in the file are relative: `-r` tells the server to resolve them
+against `CAPIO_DIR`. Without `-r`, the rule does not match the files. Start
 the server, then run the two steps with the CAPIO library preloaded:
 
 ```
-CAPIO_DIR=/tmp/mnt capio_server -c capio_config.json &
+CAPIO_DIR=/tmp/mnt capio_server -c capio_config.json -r /tmp/mnt &
 
 CAPIO_DIR=/tmp/mnt CAPIO_WORKFLOW_NAME=io_uring_example CAPIO_APP_NAME=producer \
   LD_PRELOAD=libcapio_posix.so INTERCEPT_ALL_OBJS=1 \

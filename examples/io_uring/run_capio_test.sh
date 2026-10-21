@@ -33,7 +33,8 @@ trap cleanup EXIT
 rm -rf /dev/shm/"$workflow"* /dev/shm/sem."$workflow"* 2>/dev/null
 
 # --- start the server -------------------------------------------------------
-CAPIO_DIR="$mnt" capio_server -c "$config" >"$mnt/server.log" 2>&1 &
+# -r resolves the relative patterns of the config against CAPIO_DIR.
+CAPIO_DIR="$mnt" capio_server -c "$config" -r "$mnt" >"$mnt/server.log" 2>&1 &
 server_pid=$!
 sleep 2
 kill -0 "$server_pid" 2>/dev/null || fail "server did not start (see $mnt/server.log)"
