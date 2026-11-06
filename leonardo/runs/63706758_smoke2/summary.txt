@@ -1,0 +1,10 @@
+== 63706758_smoke2
+test    config     engine    nodes  pairs  placement  mode  chunk  qd  pos  reps  prod_agg_MBps  cons_agg_MBps  e2e_s  e2e_MBps  verified
+smoke2  capio      io_uring  2      1      cross      conc  256K   32  0    1     93.1                          3.015  22.3      16/16   
+smoke2  capio      io_uring  2      1      cross      seq   256K   32  0    1     125.6          21.9                            16/16   
+smoke2  capio      io_uring  2      1      local      conc  256K   32  0    1     42.6                          1.579  42.5      16/16   
+smoke2  capio      io_uring  2      1      local      seq   256K   32  0    1     110.9          129.1                           16/16   
+smoke2  capio      posix     2      1      cross      conc  256K   32  0    1     93.9                          2.182  30.8      16/16   
+smoke2  capio      posix     2      1      cross      seq   256K   32  0    1     119.5          24.9                            16/16   
+smoke2  capio      posix     2      1      local      conc  256K   32  0    1     118.2                         0.556  120.7     16/16   
+smoke2  fs-lustre  posix     2      1      cross      seq   256K   32  0    1     194.8          50.5                            16/16   
