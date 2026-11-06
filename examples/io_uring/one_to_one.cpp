@@ -42,6 +42,8 @@ static const uint64_t OFFSET_BASIS = 0xcbf29ce484222325ULL;
 static const uint64_t FNV_PRIME    = 0x100000001b3ULL;
 
 static const char *prog_name = "one_to_one";
+// File name prefix (-t): several producer/consumer pairs share one directory.
+static const char *file_tag = "";
 
 [[noreturn]] static void usage(int status)
 {
@@ -57,6 +59,7 @@ static const char *prog_name = "one_to_one";
         << "                  Needs SQEs that complete in order (CAPIO, or -q 1)\n"
         << "  -e ENGINE       Engine: posix or io_uring\n"
         << "  -d DIR          Working directory (default: .)\n"
+        << "  -t TAG          File name prefix: DIR/TAGfile_NNNN.dat (default: none)\n"
         << "  -h              Show this help\n";
     exit(status);
 }
@@ -106,7 +109,7 @@ static void parse_args(int argc, char **argv, Config *cfg)
 {
     int opt;
 
-    while ((opt = getopt(argc, argv, "r:n:f:c:q:pe:d:h")) != -1) {
+    while ((opt = getopt(argc, argv, "r:n:f:c:q:pe:d:t:h")) != -1) {
         switch (opt) {
         case 'r':
             if (strcmp(optarg, "producer") == 0) {
@@ -151,6 +154,10 @@ static void parse_args(int argc, char **argv, Config *cfg)
             cfg->dir = optarg;
             break;
 
+        case 't':
+            file_tag = optarg;
+            break;
+
         case 'h':
             usage(EXIT_SUCCESS);
 
@@ -185,8 +192,8 @@ static void parse_args(int argc, char **argv, Config *cfg)
 static std::string file_path(const char *dir, int idx)
 {
     char name[32];
-    snprintf(name, sizeof(name), "/file_%04d.dat", idx);
-    return std::string(dir) + name;
+    snprintf(name, sizeof(name), "file_%04d.dat", idx);
+    return std::string(dir) + "/" + file_tag + name;
 }
 
 static bool write_all(int fd, const unsigned char *buf, size_t len)
