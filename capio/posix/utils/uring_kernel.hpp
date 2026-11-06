@@ -3,6 +3,7 @@
 
 #if defined(SYS_io_uring_setup)
 
+#include <chrono>
 #include <mutex>
 
 #include "utils/uring.hpp"
@@ -17,8 +18,10 @@ constexpr uint64_t CAPIO_URING_WAKE_USER_DATA = 0xCA910C0FFEE00002ULL;
 // io_uring_enter when its CQ looks empty, and enter collects the kernel CQEs.
 inline void uring_update_enter_hint(CapioRing &ring) {
     const KernelRing &k = ring.kernel;
-    if (k.inflight > 0 || !ring.overflow.empty() ||
-        *k.cq_head != __atomic_load_n(k.cq_tail, __ATOMIC_ACQUIRE)) {
+    const bool kernel_busy =
+        uring_has_kernel(ring) &&
+        (k.inflight > 0 || *k.cq_head != __atomic_load_n(k.cq_tail, __ATOMIC_ACQUIRE));
+    if (kernel_busy || !ring.overflow.empty()) {
         __atomic_fetch_or(ring.sq_flags, IORING_SQ_CQ_OVERFLOW, __ATOMIC_RELEASE);
     } else {
         __atomic_fetch_and(ring.sq_flags, ~IORING_SQ_CQ_OVERFLOW, __ATOMIC_RELEASE);
@@ -30,6 +33,10 @@ inline void uring_collect(CapioRing &ring) {
         const io_uring_cqe cqe = ring.overflow.front();
         ring.overflow.pop_front();
         uring_write_cqe(ring, cqe.user_data, cqe.res, cqe.flags);
+    }
+    if (!uring_has_kernel(ring)) {
+        uring_update_enter_hint(ring);
+        return;
     }
     KernelRing &k       = ring.kernel;
     uint32_t head       = *k.cq_head;
@@ -80,6 +87,12 @@ inline void uring_kernel_flush(CapioRing &ring) {
 // An SQE with CQE_SKIP_SUCCESS may post no CQE, so it does not count as in flight.
 inline void uring_kernel_queue(CapioRing &ring, const io_uring_sqe &sqe) {
     KernelRing &k = ring.kernel;
+    if (!uring_has_kernel(ring)) { // not reached: uring_submit keeps such SQEs in CAPIO
+        if (sqe.user_data != CAPIO_URING_WAKE_USER_DATA) {
+            uring_post_cqe(ring, sqe.user_data, sqe.opcode == IORING_OP_NOP ? 0 : -ENOSYS);
+        }
+        return;
+    }
     if (*k.sq_tail - __atomic_load_n(k.sq_head, __ATOMIC_ACQUIRE) == k.sq_entries) {
         uring_kernel_flush(ring);
     }
@@ -96,7 +109,9 @@ inline void uring_kernel_queue(CapioRing &ring, const io_uring_sqe &sqe) {
 
 // Every wait is in the kernel ring; a thread that posts CAPIO CQEs ends it with a NOP.
 inline void uring_wake_waiters(CapioRing &ring) {
-    if (ring.waiters > 0) {
+    if (ring.waiters > 0 && !uring_has_kernel(ring)) {
+        ring.completions.notify_all();
+    } else if (ring.waiters > 0) {
         io_uring_sqe nop{};
         nop.opcode    = IORING_OP_NOP;
         nop.user_data = CAPIO_URING_WAKE_USER_DATA;
@@ -111,8 +126,39 @@ struct UringWaitArg {
     size_t size     = 0;
 };
 
+// Without a kernel ring only CAPIO posts CQEs, and it wakes the waiters. A
+// forked process that shares the ring cannot, so the wait rechecks every 5 ms.
+// Returns 0 (recheck the CQ), -ETIME (EXT_ARG timeout passed) or -EINVAL.
+inline long uring_local_wait(CapioRing &ring, std::unique_lock<std::mutex> &lock,
+                             const UringWaitArg &wait) {
+    using clock    = std::chrono::steady_clock;
+    auto until     = clock::now() + std::chrono::milliseconds(5);
+    bool has_limit = false;
+    clock::time_point limit;
+    if (wait.flags & IORING_ENTER_EXT_ARG) {
+        if (wait.size != sizeof(io_uring_getevents_arg)) {
+            return -EINVAL;
+        }
+        const auto *arg = static_cast<const io_uring_getevents_arg *>(wait.arg);
+        if (arg != nullptr && arg->ts != 0) {
+            const auto *ts = reinterpret_cast<const __kernel_timespec *>(arg->ts);
+            limit          = clock::now() + std::chrono::seconds(ts->tv_sec) +
+                    std::chrono::nanoseconds(ts->tv_nsec);
+            has_limit = true;
+            until     = std::min(until, limit);
+        }
+    }
+    ++ring.waiters;
+    ring.completions.wait_until(lock, until);
+    --ring.waiters;
+    return has_limit && clock::now() >= limit ? -ETIME : 0;
+}
+
 inline long uring_kernel_wait(CapioRing &ring, std::unique_lock<std::mutex> &lock,
                               const UringWaitArg &wait = {}) {
+    if (!uring_has_kernel(ring)) {
+        return uring_local_wait(ring, lock, wait);
+    }
     ++ring.waiters;
     lock.unlock();
     const long r = capio_syscall(SYS_io_uring_enter, ring.kernel.fd, 0, 1,
@@ -140,7 +186,7 @@ inline long uring_wait(CapioRing &ring, unsigned min_complete, const UringWaitAr
     while (uring_cq_ready(ring) < min_complete && uring_cq_has_space(ring)) {
         const long r = uring_kernel_wait(ring, lock, wait);
         uring_collect(ring);
-        if ((r == -EINTR || r == -ETIME) && uring_cq_ready(ring) < min_complete) {
+        if ((r == -EINTR || r == -ETIME || r == -EINVAL) && uring_cq_ready(ring) < min_complete) {
             return r;
         }
     }

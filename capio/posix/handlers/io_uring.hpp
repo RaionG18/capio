@@ -25,6 +25,8 @@
 
 // io_uring on a CAPIO ring: CAPIO serves the SQEs for CAPIO files and forwards
 // every other SQE to a hidden kernel ring, whose CQEs it copies to the app's CQ.
+// On a kernel without io_uring there is no kernel ring: CAPIO serves its files
+// and every other SQE, except NOP and CLOSE, completes with -ENOSYS.
 
 // Setup flags that synchronous execution satisfies; others return EINVAL.
 constexpr unsigned CAPIO_URING_SETUP_FLAGS =
@@ -120,8 +122,11 @@ inline int capio_io_uring_setup(unsigned entries, io_uring_params *params, long 
     }
 
     // No SINGLE_MMAP: the SQ and CQ are separate memfd regions.
+    // Without a kernel ring, CAPIO implements the EXT_ARG wait itself.
     params->features = IORING_FEAT_SUBMIT_STABLE | IORING_FEAT_RW_CUR_POS | IORING_FEAT_CQE_SKIP |
-                       (ring->kernel.features & CAPIO_URING_KERNEL_FEATURES);
+                       (uring_has_kernel(*ring)
+                            ? ring->kernel.features & CAPIO_URING_KERNEL_FEATURES
+                            : IORING_FEAT_EXT_ARG);
 
     LOG("io_uring_setup emulated: ring_fd=%d sq_entries=%u cq_entries=%u", ring_fd,
         ring->sq_entries, ring->cq_entries);
@@ -314,6 +319,15 @@ inline const io_uring_sqe *uring_sqe_at(const CapioRing &ring, uint32_t pos) {
     return idx < ring.sq_entries ? &ring.sqes[idx] : nullptr;
 }
 
+// An SQE that CAPIO leaves, on a ring without a kernel ring: a CLOSE is a plain
+// close (as the kernel ring would do for a CAPIO file); the rest is unsupported.
+inline int32_t uring_no_kernel_exec(const io_uring_sqe &sqe) {
+    if (sqe.opcode == IORING_OP_CLOSE && !(sqe.flags & IOSQE_FIXED_FILE)) {
+        return static_cast<int32_t>(syscall_no_intercept(SYS_close, sqe.fd));
+    }
+    return -ENOSYS;
+}
+
 // A chain that mixes CAPIO and kernel SQEs is not supported: its kernel members
 // fail with EINVAL. A single SQE that CAPIO leaves goes to the kernel ring.
 inline bool uring_run_chain(CapioRing &ring, uint32_t head, uint32_t count, long tid) {
@@ -327,7 +341,9 @@ inline bool uring_run_chain(CapioRing &ring, uint32_t head, uint32_t count, long
         } else if (sqe.opcode == IORING_OP_NOP) {
             res = 0; // no side effect: completed here, in chain order
         } else if (!uring_for_capio(&sqe) || !uring_capio_exec(&sqe, tid, res)) {
-            if (count == 1) {
+            if (!uring_has_kernel(ring)) {
+                res = uring_no_kernel_exec(sqe);
+            } else if (count == 1) {
                 uring_kernel_queue(ring, sqe);
                 continue;
             }
@@ -359,7 +375,7 @@ inline uint32_t uring_submit(CapioRing &ring, unsigned to_submit, long tid, bool
             break;
         }
         uint32_t count = 1;
-        bool for_capio = uring_for_capio(sqe);
+        bool for_capio = !uring_has_kernel(ring) || uring_for_capio(sqe);
         for (const io_uring_sqe *last = sqe;
              (last->flags & (IOSQE_IO_LINK | IOSQE_IO_HARDLINK)) && submitted + count < wanted;
              ++count) {
@@ -487,7 +503,18 @@ inline off64_t capio_io_uring_register(int ring_fd, unsigned opcode, void *arg, 
         return CAPIO_POSIX_SYSCALL_ERRNO;
     }
 
-    const long r = syscall_no_intercept(SYS_io_uring_register, ring->kernel.fd, opcode, arg, count);
+    // Without a kernel ring CAPIO keeps the eventfd itself, and fixed buffers need
+    // nothing (CAPIO reads sqe->addr); any other opcode is unsupported.
+    long r = 0;
+    if (uring_has_kernel(*ring)) {
+        r = syscall_no_intercept(SYS_io_uring_register, ring->kernel.fd, opcode, arg, count);
+    } else if (opcode == IORING_REGISTER_EVENTFD || opcode == IORING_REGISTER_EVENTFD_ASYNC) {
+        r = arg == nullptr || count != 1 ? -EINVAL : 0;
+    } else if (opcode == IORING_UNREGISTER_EVENTFD) {
+        r = ring->eventfd < 0 ? -ENXIO : 0;
+    } else if (opcode != IORING_REGISTER_BUFFERS && opcode != IORING_UNREGISTER_BUFFERS) {
+        r = -ENOSYS;
+    }
     if (r < 0) {
         errno = static_cast<int>(-r);
         return CAPIO_POSIX_SYSCALL_ERRNO;

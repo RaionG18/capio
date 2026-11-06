@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <linux/io_uring.h>
@@ -43,6 +44,7 @@
 #endif
 
 // The hidden kernel ring: it serves every SQE that does not concern CAPIO.
+// fd stays -1 on a kernel without io_uring (see uring_kernel_setup).
 struct KernelRing {
     int fd              = -1;
     uint32_t features   = 0;
@@ -87,6 +89,7 @@ struct CapioRing {
     bool eventfd_async = false;
     uint32_t waiters   = 0;
     std::mutex lock;
+    std::condition_variable completions; // waits when there is no kernel ring
 
     ~CapioRing();
 };
@@ -203,6 +206,12 @@ inline long uring_kernel_setup(CapioRing &ring) {
     p.flags       = IORING_SETUP_CQSIZE;
     p.cq_entries  = ring.cq_entries;
     const long fd = capio_syscall(SYS_io_uring_setup, ring.sq_entries, &p);
+    if (fd == -ENOSYS || fd == -EPERM) {
+        // No io_uring in this kernel (or disabled by kernel.io_uring_disabled):
+        // the ring still serves CAPIO files; other SQEs complete with -ENOSYS.
+        LOG("kernel io_uring_setup failed: %ld, running without a kernel ring", fd);
+        return 0;
+    }
     if (fd < 0) {
         LOG("kernel io_uring_setup failed: %ld", fd);
         return fd;
@@ -263,6 +272,8 @@ inline CapioRing::~CapioRing() {
     uring_unmap(*this);
     uring_kernel_destroy(kernel);
 }
+
+inline bool uring_has_kernel(const CapioRing &ring) { return ring.kernel.fd >= 0; }
 
 inline uint32_t uring_cq_ready(const CapioRing &ring) {
     uint32_t head = __atomic_load_n(ring.cq_head, __ATOMIC_ACQUIRE);
