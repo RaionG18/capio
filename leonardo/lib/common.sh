@@ -55,9 +55,16 @@ run_init() {
 }
 
 # Kills anything an aborted experiment left behind, on every node.
+# Only THIS job's processes and files: nodes can be shared with other jobs of the
+# same user (smoke tests run on shared slices), so never match by program name.
+# Every process of the job has its data path (with the job id) on its command
+# line; the pattern travels in the environment so this script's own command line
+# does not match it.
 run_cleanup() {
-    srun --overlap -N "$NNODES" --ntasks-per-node=1 bash -c \
-        'pkill -u "$USER" -x capio_server; pkill -u "$USER" -x one_to_one; rm -rf /dev/shm/o2o* /dev/shm/sem.o2o* "${TMPDIR:-/tmp}"/capio_bench_*' \
+    CLEAN_RE="capio_runs/${RUN_ID}/|capio_bench_${SLURM_JOB_ID}_" CLEAN_JOB="$SLURM_JOB_ID" \
+        srun --overlap -N "$NNODES" --ntasks-per-node=1 bash -c \
+        'for p in $(pgrep -u "$USER" -f -- "$CLEAN_RE"); do [ "$p" != $$ ] && kill -KILL "$p"; done
+         rm -rf /dev/shm/o2o"$CLEAN_JOB"x* /dev/shm/sem.o2o"$CLEAN_JOB"x* "${TMPDIR:-/tmp}"/capio_bench_"$CLEAN_JOB"_*' \
         >/dev/null 2>&1 || true
 }
 

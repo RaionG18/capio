@@ -61,7 +61,7 @@ stop_server() {
 case "$CONFIG" in
 fs-lustre | capio) dir="$DATA_DIR" ;;
 fs-tmp)
-    dir="${TMPDIR:-/tmp}/capio_bench_$EXP"
+    dir="${TMPDIR:-/tmp}/capio_bench_${SLURM_JOB_ID}_$EXP"
     mkdir -p "$dir"
     ;;
 *) fail "unknown CONFIG $CONFIG" ;;
