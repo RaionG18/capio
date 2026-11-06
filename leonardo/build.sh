@@ -11,7 +11,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
-jobs="${BUILD_JOBS:-8}"
+jobs="${BUILD_JOBS:-4}" # login nodes are shared: keep it modest
 mkdir -p "$LEO_DEPS/src" "$LEO_DEPS/bin"
 
 if [ "${1:-}" = "--clean" ]; then

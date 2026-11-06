@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=capio_cross
-#SBATCH --time=01:00:00
+#SBATCH --time=00:45:00
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=112

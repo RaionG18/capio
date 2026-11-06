@@ -32,13 +32,27 @@ git clone -b test https://github.com/RaionG18/capio.git && cd capio
 ./leonardo/build.sh                          # liburing + CAPIO + benchmark (login node: needs internet)
 ./leonardo/submit.sh leonardo/jobs/00_smoke.slurm
 ./leonardo/submit.sh leonardo/jobs/01_smoke_2nodes.slurm
-# after the smoke tests pass:
-./leonardo/submit.sh leonardo/jobs/10_single_node.slurm
-./leonardo/submit.sh leonardo/jobs/11_intranode_scaling.slurm
-./leonardo/submit.sh leonardo/jobs/20_cross_node.slurm
-for n in 1 2 4 8; do ./leonardo/submit.sh leonardo/jobs/30_scaling.slurm --nodes=$n; done
+# after the smoke tests pass: the measurement jobs, chained (one at a time)
+./leonardo/campaign.sh
 python3 leonardo/analysis/summarize.py --all leonardo/results   # every run, one table
 ```
+
+## Fair use (shared account `ict26_mhpc`)
+
+- **Smoke tests use a shared slice** (8 cores, 32 GB) because they are functional checks.
+- **Only measurement jobs take whole nodes**, so that other users' jobs do not
+  disturb the timings. Billing is per allocated core: one DCGP node is 112
+  core-hours per hour of use.
+- **`campaign.sh` chains the jobs** (`afterany`): one allocation at a time,
+  8 nodes at most, and the account's queue is never flooded.
+- **Walltimes are tight upper bounds.** The whole campaign is at most ≈1,500
+  core-hours and about half of that in practice (account budget at submission:
+  16,615 core-hours/month, ≈54,000 left until 31 Dec 2026). Check with
+  `saldo -b` before submitting.
+- **Builds run on the login node with `-j4`**, since FetchContent needs the
+  internet.
+- **Barriers poll Lustre every 0.5 s.** Benchmark data are deleted after each
+  experiment, and the run's scratch directory when the job ends.
 
 ## Output: one directory per run
 

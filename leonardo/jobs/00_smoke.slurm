@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=capio_smoke
-#SBATCH --time=00:20:00
+#SBATCH --time=00:15:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=112
-#SBATCH --exclusive
-#SBATCH --mem=0
-#SBATCH --gres=tmpfs:100g
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --gres=tmpfs:20g
 #
+# Functional test: a shared slice of the node (8 cores, 32 GB), not a whole node.
 # Smoke test, one node: does everything work before spending node-hours?
 #  1. the kernel has no io_uring (FS-uring cannot run here);
 #  2. the io_uring quickstart (liburing producer/consumer, streaming) under CAPIO;

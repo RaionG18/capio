@@ -35,7 +35,7 @@ barrier() { # barrier <name> [timeout_s]
             echo "barrier $name: timeout after ${limit}s"
             return 1
         fi
-        sleep 0.1
+        sleep 0.5 # gentle on the Lustre metadata server
     done
 }
 fail() { # fail <reason>: tell the others, then leave

@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=capio_smoke2
-#SBATCH --time=00:20:00
+#SBATCH --time=00:15:00
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=112
-#SBATCH --exclusive
-#SBATCH --mem=0
-#SBATCH --gres=tmpfs:100g
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --gres=tmpfs:20g
 #
+# Functional test: a shared slice of the node (8 cores, 32 GB), not a whole node.
 # Smoke test, two nodes: CAPIO servers find each other (MTCL over TCP, discovery
 # through token files on Lustre) and a consumer on node 1 reads what a producer
 # on node 0 wrote, with both engines, after the producer (seq) and while it

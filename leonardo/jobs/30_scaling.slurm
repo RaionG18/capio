@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=capio_scaling
-#SBATCH --time=01:00:00
+#SBATCH --time=00:40:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=112
