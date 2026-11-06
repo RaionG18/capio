@@ -51,3 +51,9 @@ build
 .capio_tokens
 
 cmake_test_discovery*.json
+
+# Leonardo test harness: build products and raw results (finished runs go to leonardo/runs/)
+leonardo/.deps/
+leonardo/results/
+build-leonardo/
+__pycache__/
