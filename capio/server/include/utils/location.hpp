@@ -3,6 +3,11 @@
 
 #include "remote/backend.hpp"
 
+#include <algorithm>
+#include <cerrno>
+#include <chrono>
+#include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <thread>
 
@@ -24,11 +29,43 @@ inline int files_location_fd;
 inline FILE *files_location_fp;
 inline std::unordered_map<std::string, FILE *> files_location_fps;
 
+/// Serializes this server's threads around the files_location_*.txt files. fcntl() record locks
+/// belong to the whole process, so they keep other servers out but not the other threads of this
+/// one, which also share the FILE streams (offsets) and files_location_fps.
+inline std::mutex files_location_io_mutex;
+
+/// Errors after which fcntl() is retried: a signal, or a transient failure of the lock manager of
+/// a distributed file system (Lustre returns EIO when a lock request is interrupted under load).
+inline bool flock_should_retry(const int error) {
+    return error == EINTR || error == EIO || error == ENOLCK || error == EDEADLK;
+}
+
 class Flock {
   private:
+    /// Attempts made before giving up on a lock, with a delay that doubles from 1 ms to 100 ms
+    /// (about 10 s in all).
+    static constexpr int MAX_ATTEMPTS = 100;
+
     int _fd;
     short _l_type;
     struct flock _lock;
+
+    inline int set_lock(const int cmd) {
+        int error = 0;
+        auto delay = std::chrono::milliseconds(1);
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; ++attempt) {
+            if (fcntl(_fd, cmd, &_lock) == 0) {
+                return 0;
+            }
+            error = errno;
+            if (!flock_should_retry(error)) {
+                break;
+            }
+            std::this_thread::sleep_for(delay);
+            delay = std::min(delay * 2, std::chrono::milliseconds(100));
+        }
+        return error;
+    }
 
   public:
     inline explicit Flock(const int fd, const short l_type) : _fd(fd), _l_type(l_type), _lock() {
@@ -44,25 +81,27 @@ class Flock {
     Flock &operator=(const Flock &) = delete;
     inline ~Flock()                 = default;
 
+    // The descriptor is shared by every thread of the server, so a failure must never close it.
     inline void lock() {
         START_LOG(gettid(), "call()");
 
         _lock.l_type = _l_type;
-        if (fcntl(_fd, F_SETLKW, &_lock) < 0) {
-            close(_fd);
-            ERR_EXIT("CAPIO server failed to lock the file with error %d (%s)", errno,
-                     strerror(errno));
+        if (const int error = set_lock(F_SETLKW); error != 0) {
+            ERR_EXIT("CAPIO server failed to lock the file with error %d (%s)", error,
+                     strerror(error));
         }
     }
 
-    inline void unlock() {
+    // Called from a destructor (std::lock_guard), so it reports a failure instead of throwing.
+    inline void unlock() noexcept {
         START_LOG(gettid(), "call()");
 
         _lock.l_type = F_UNLCK;
-        if (fcntl(_fd, F_SETLK, &_lock) < 0) {
-            close(_fd);
-            ERR_EXIT("CAPIO server failed to unlock the file with error %d (%s)", errno,
-                     strerror(errno));
+        if (const int error = set_lock(F_SETLK); error != 0) {
+            LOG("CAPIO server failed to unlock the file with error %d (%s)", error,
+                strerror(error));
+            fprintf(stderr, "CAPIO server failed to unlock the file with error %d (%s)\n", error,
+                    strerror(error));
         }
     }
 };
@@ -147,6 +186,7 @@ inline void rename_file_location(const std::filesystem::path &oldpath,
 inline bool load_file_location(const std::filesystem::path &path_to_load) {
     START_LOG(gettid(), "call(path_to_load=%s)", path_to_load.c_str());
     bool found = false;
+    const std::lock_guard<std::mutex> io_lg(files_location_io_mutex);
     auto line  = reinterpret_cast<char *>(malloc((PATH_MAX + HOST_NAME_MAX + 10) * sizeof(char)));
 
     for (auto &node : backend->get_nodes()) {
@@ -201,6 +241,7 @@ inline int delete_from_files_location(const std::filesystem::path &path) {
     START_LOG(gettid(), "call(%s)", path.c_str());
 
     int result           = 2;
+    const std::lock_guard<std::mutex> io_lg(files_location_io_mutex);
     auto &[node, offset] = get_file_location(path);
     LOG("Remove %s from node %s at offset %ld", path.c_str(), node, offset);
     const std::string name = get_file_location_name(node);
@@ -261,8 +302,13 @@ inline int delete_from_files_location(const std::filesystem::path &path) {
 inline void loop_load_file_location(const std::filesystem::path &path_to_load) {
     START_LOG(gettid(), "call(path_to_load=%s)", path_to_load.c_str());
 
+    // Each attempt takes a lock on every node's location file, which on a parallel file system
+    // is a request to its lock manager, so back off while the file does not appear: 200 us,
+    // doubling, capped at 20 ms (a file that shows up later is seen at most 20 ms late).
+    auto delay = std::chrono::microseconds(200);
     while (!load_file_location(path_to_load)) {
-        std::this_thread::sleep_for(std::chrono::microseconds(200));
+        std::this_thread::sleep_for(delay);
+        delay = std::min(delay * 2, std::chrono::microseconds(20000));
     }
 }
 
@@ -288,6 +334,7 @@ inline void open_files_location() {
 inline void write_file_location(const std::filesystem::path &path_to_write) {
     START_LOG(gettid(), "call(path_to_write=%s)", path_to_write.c_str());
 
+    const std::lock_guard<std::mutex> io_lg(files_location_io_mutex);
     Flock file_lock(files_location_fd, F_WRLCK);
     const std::lock_guard<Flock> lg(file_lock);
 
