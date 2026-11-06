@@ -1,0 +1,10 @@
+run_id,exp,test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,rep,status,wall_s,files_on_disk
+63688173_smoke2,e001_capio_posix_n2_p1_local_seq_c256K_q32_r1,smoke2,capio,posix,2,1,local,seq,8,4194304,262144,32,0,1,ok,5,0
+63688173_smoke2,e002_capio_posix_n2_p1_local_conc_c256K_q32_r1,smoke2,capio,posix,2,1,local,conc,8,4194304,262144,32,0,1,ok,5,0
+63688173_smoke2,e003_capio_posix_n2_p1_cross_seq_c256K_q32_r1,smoke2,capio,posix,2,1,cross,seq,8,4194304,262144,32,0,1,ok,8,0
+63688173_smoke2,e004_capio_posix_n2_p1_cross_conc_c256K_q32_r1,smoke2,capio,posix,2,1,cross,conc,8,4194304,262144,32,0,1,ok,8,0
+63688173_smoke2,e005_capio_io_uring_n2_p1_local_seq_c256K_q32_r1,smoke2,capio,io_uring,2,1,local,seq,8,4194304,262144,32,0,1,ok,4,0
+63688173_smoke2,e006_capio_io_uring_n2_p1_local_conc_c256K_q32_r1,smoke2,capio,io_uring,2,1,local,conc,8,4194304,262144,32,0,1,ok,5,0
+63688173_smoke2,e007_capio_io_uring_n2_p1_cross_seq_c256K_q32_r1,smoke2,capio,io_uring,2,1,cross,seq,8,4194304,262144,32,0,1,ok,6,0
+63688173_smoke2,e008_capio_io_uring_n2_p1_cross_conc_c256K_q32_r1,smoke2,capio,io_uring,2,1,cross,conc,8,4194304,262144,32,0,1,failed,905,0
+63688173_smoke2,e009_fs-lustre_posix_n2_p1_cross_seq_c256K_q32_r1,smoke2,fs-lustre,posix,2,1,cross,seq,8,4194304,262144,32,0,1,ok,5,

@@ -1,0 +1,16 @@
+run_id,exp,test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,rep,status,wall_s,files_on_disk
+63688172_smoke,e001_fs-lustre_posix_n1_p1_local_seq_c256K_q32_r1,smoke,fs-lustre,posix,1,1,local,seq,8,4194304,262144,32,0,1,ok,2,
+63688172_smoke,e002_fs-lustre_posix_n1_p1_local_conc_c256K_q32_r1,smoke,fs-lustre,posix,1,1,local,conc,8,4194304,262144,32,0,1,skipped,,
+63688172_smoke,e003_fs-lustre_io_uring_n1_p1_local_seq_c256K_q32_r1,smoke,fs-lustre,io_uring,1,1,local,seq,8,4194304,262144,32,0,1,skipped,,
+63688172_smoke,e004_fs-lustre_io_uring_n1_p1_local_conc_c256K_q32_r1,smoke,fs-lustre,io_uring,1,1,local,conc,8,4194304,262144,32,0,1,skipped,,
+63688172_smoke,e005_fs-tmp_posix_n1_p1_local_seq_c256K_q32_r1,smoke,fs-tmp,posix,1,1,local,seq,8,4194304,262144,32,0,1,ok,2,
+63688172_smoke,e006_fs-tmp_posix_n1_p1_local_conc_c256K_q32_r1,smoke,fs-tmp,posix,1,1,local,conc,8,4194304,262144,32,0,1,skipped,,
+63688172_smoke,e007_fs-tmp_io_uring_n1_p1_local_seq_c256K_q32_r1,smoke,fs-tmp,io_uring,1,1,local,seq,8,4194304,262144,32,0,1,skipped,,
+63688172_smoke,e008_fs-tmp_io_uring_n1_p1_local_conc_c256K_q32_r1,smoke,fs-tmp,io_uring,1,1,local,conc,8,4194304,262144,32,0,1,skipped,,
+63688172_smoke,e009_capio_posix_n1_p1_local_seq_c256K_q32_r1,smoke,capio,posix,1,1,local,seq,8,4194304,262144,32,0,1,ok,3,0
+63688172_smoke,e010_capio_posix_n1_p1_local_conc_c256K_q32_r1,smoke,capio,posix,1,1,local,conc,8,4194304,262144,32,0,1,ok,4,0
+63688172_smoke,e011_capio_io_uring_n1_p1_local_seq_c256K_q32_r1,smoke,capio,io_uring,1,1,local,seq,8,4194304,262144,32,0,1,ok,3,0
+63688172_smoke,e012_capio_io_uring_n1_p1_local_conc_c256K_q32_r1,smoke,capio,io_uring,1,1,local,conc,8,4194304,262144,32,0,1,ok,5,0
+63688172_smoke,e013_capio_io_uring_n1_p1_local_seq_c256K_q32_pos_r1,smoke,capio,io_uring,1,1,local,seq,8,4194304,262144,32,1,1,ok,4,0
+63688172_smoke,e014_capio_io_uring_n1_p4_local_seq_c256K_q32_r1,smoke,capio,io_uring,1,4,local,seq,8,4194304,262144,32,0,1,ok,4,0
+63688172_smoke,e015_capio_posix_n1_p4_local_seq_c256K_q32_r1,smoke,capio,posix,1,4,local,seq,8,4194304,262144,32,0,1,ok,4,0

@@ -1,0 +1,9 @@
+test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,reps,prod_agg_MBps,cons_agg_MBps,prod_proc_MBps,cons_proc_MBps,e2e_s,e2e_MBps,verified
+smoke2,capio,io_uring,2,1,cross,seq,8,4194304,262144,32,0,1,102.2,19.6,224.0,12.0,,,16/16
+smoke2,capio,io_uring,2,1,local,conc,8,4194304,262144,32,0,1,86.0,,81.5,19.6,0.800,83.9,16/16
+smoke2,capio,io_uring,2,1,local,seq,8,4194304,262144,32,0,1,98.9,113.7,201.0,1062.1,,,16/16
+smoke2,capio,posix,2,1,cross,conc,8,4194304,262144,32,0,1,111.3,,160.0,7.3,3.618,18.6,16/16
+smoke2,capio,posix,2,1,cross,seq,8,4194304,262144,32,0,1,99.3,15.7,260.2,9.0,,,16/16
+smoke2,capio,posix,2,1,local,conc,8,4194304,262144,32,0,1,90.1,,265.9,23.1,0.762,88.1,16/16
+smoke2,capio,posix,2,1,local,seq,8,4194304,262144,32,0,1,55.7,123.6,113.6,1193.9,,,16/16
+smoke2,fs-lustre,posix,2,1,cross,seq,8,4194304,262144,32,0,1,446.7,256.5,374.7,154.1,,,16/16
