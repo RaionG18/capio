@@ -69,6 +69,10 @@ esac
 
 # --- CAPIO server (start) ------------------------------------------------------
 if [ "$CONFIG" = capio ]; then
+    # Another job on this node may hold the port: peers would then reach its server.
+    if command -v ss >/dev/null && [ -n "$(ss -Hltn "sport = :$CAPIO_PORT")" ]; then
+        fail "TCP port $CAPIO_PORT is already in use on $host"
+    fi
     # Like CAPIO's multinode integration test: the server runs in CAPIO_DIR on a
     # shared filesystem, so every node sees the others' files_location_<host>.txt.
     (cd "$dir" && CAPIO_DIR="$dir" CAPIO_WORKFLOW_NAME="$WF" exec "$CAPIO_SERVER" \

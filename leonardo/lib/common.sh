@@ -68,6 +68,13 @@ run_cleanup() {
         >/dev/null 2>&1 || true
 }
 
+# TCP port of this experiment's CAPIO servers. It depends on the job ID because
+# shared-slice jobs can run on the same node at once: each job gets its own block
+# of 200 ports in 10000-29999 (below the ephemeral range, which starts at 32768).
+capio_port() {
+    echo $((10000 + (SLURM_JOB_ID % 100) * 200 + EXP_SEQ % 200))
+}
+
 # run_exp config=capio engine=io_uring pairs=1 placement=local mode=seq \
 #         nfiles=64 fsize=8M chunk=256K qd=32 pos=0 rep=1 [nodes=N] [test=label]
 # Sizes accept K/M/G suffixes (powers of 2). test= labels the rows (default:
@@ -128,7 +135,7 @@ EOF
         CONFIG="$config" ENGINE="$engine" PAIRS="$pairs" PLACEMENT="$placement" MODE="$mode" \
         NFILES="$nfiles" FSIZE="$fsize_b" CHUNK="$chunk_b" QD="$qd" \
         POSFLAG="$([ "$pos" = 1 ] && echo -p)" DATA_DIR="$exp_data/data" \
-        CAPIO_CFG="$cfg" CAPIO_TOK="$exp_data/tokens" CAPIO_PORT=$((7600 + EXP_SEQ % 1000)) \
+        CAPIO_CFG="$cfg" CAPIO_TOK="$exp_data/tokens" CAPIO_PORT="$(capio_port)" \
         WF="o2o${SLURM_JOB_ID}x$EXP_SEQ" \
         timeout -s TERM "${EXP_TIMEOUT:-1200}" \
         srun --overlap -N "$nodes" --ntasks-per-node=1 -c "$CPUS_PER_NODE" --cpu-bind=none \
