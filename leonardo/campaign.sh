@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Submits the measurement campaign as a chain: each job starts only after the
-# previous one ends (afterany), so the campaign holds at most one allocation at
-# a time (8 nodes at most) and never floods the shared account's queue.
+# previous one completed successfully (afterok), so the campaign holds at most
+# one allocation at a time (8 nodes at most) and never floods the shared
+# account's queue. A job that aborts (2 failed experiments in a row, see
+# lib/common.sh) or hits its walltime stops the chain: the later jobs stay
+# pending with reason DependencyNeverSatisfied until cancelled (scancel).
 #
 #   ./leonardo/campaign.sh              all measurement jobs
 #   ./leonardo/campaign.sh --dry-run    print the sbatch commands only
@@ -28,7 +31,7 @@ prev=""
 for entry in "${jobs[@]}"; do
     read -r script args <<<"$entry"
     dep=()
-    [ -n "$prev" ] && dep=(--dependency="afterany:$prev")
+    [ -n "$prev" ] && dep=(--dependency="afterok:$prev")
     if [ "$dry" = 1 ]; then
         echo "submit.sh $here/$script ${dep[*]} ${args:-}"
         prev="PREV"

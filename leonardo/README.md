@@ -32,19 +32,27 @@ git clone -b test https://github.com/RaionG18/capio.git && cd capio
 ./leonardo/build.sh                          # liburing + CAPIO + benchmark (login node: needs internet)
 ./leonardo/submit.sh leonardo/jobs/00_smoke.slurm
 ./leonardo/submit.sh leonardo/jobs/01_smoke_2nodes.slurm
-# after the smoke tests pass: the measurement jobs, chained (one at a time)
+./leonardo/submit.sh leonardo/jobs/03_preflight_8nodes.slurm  # every campaign shape, small files
+# after the smoke and preflight tests pass: the measurement jobs, chained (one at a time)
 ./leonardo/campaign.sh
 python3 leonardo/analysis/summarize.py --all leonardo/results   # every run, one table
 ```
 
 ## Fair use (shared account `ict26_mhpc`)
 
-- **Smoke tests use a shared slice** (8 cores, 32 GB) because they are functional checks.
+- **Functional tests use a shared slice** (8 cores, 32 GB): smoke, stress and
+  preflight (8 nodes × 8 cores, every shape the campaign uses, small files).
 - **Only measurement jobs take whole nodes**, so that other users' jobs do not
   disturb the timings. Billing is per allocated core: one DCGP node is 112
   core-hours per hour of use.
-- **`campaign.sh` chains the jobs** (`afterany`): one allocation at a time,
-  8 nodes at most, and the account's queue is never flooded.
+- **`campaign.sh` chains the jobs** (`afterok`): one allocation at a time,
+  8 nodes at most, and the account's queue is never flooded. A job that aborts
+  or hits its walltime stops the chain; cancel the pending rest with `scancel`.
+- **A stuck experiment costs minutes, not the job.** Each experiment's time
+  limit follows from the data per node (180 s + 4× the time at 25 MB/s per
+  node, at most 1200 s; `EXP_TIMEOUT`/`PROC_TIMEOUT` override it), and a job
+  stops after 2 failed experiments in a row (`MAX_CONSECUTIVE_FAILS`); the
+  rest are recorded as `aborted`.
 - **Walltimes are tight upper bounds.** The whole campaign is at most ≈1,500
   core-hours and about half of that in practice (account budget at submission:
   16,615 core-hours/month, ≈54,000 left until 31 Dec 2026). Check with
@@ -63,7 +71,7 @@ python3 leonardo/analysis/summarize.py --all leonardo/results   # every run, one
 |---|---|
 | `job.log` | everything the job printed |
 | `meta.txt` | commit, nodes, kernel, modules |
-| `experiments.csv` | one row per experiment: parameters, `ok`/`failed`/`skipped`, wall time, CAPIO files found on disk |
+| `experiments.csv` | one row per experiment: parameters, `ok`/`failed`/`skipped`/`aborted`, wall time, CAPIO files found on disk |
 | `results.csv` | one row per producer/consumer process: host, start/end time, MB/s, files verified, exit code |
 | `summary.txt`, `summary.csv` | mean ± stddev over repetitions |
 | `logs/<exp>/node<k>/` | CAPIO server log, node log, output of every process |

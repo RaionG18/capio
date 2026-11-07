@@ -27,6 +27,8 @@ run_init() {
     mapfile -t NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
     NNODES=${#NODES[@]}
     EXP_SEQ=0
+    CONSECUTIVE_FAILS=0
+    ABORTED=""
     CPUS_PER_NODE="${SLURM_CPUS_ON_NODE:-112}"
 
     {
@@ -75,6 +77,23 @@ capio_port() {
     echo $((10000 + (SLURM_JOB_ID % 100) * 200 + EXP_SEQ % 200))
 }
 
+# Time limits of one experiment, from the data each node produces (MiB):
+# 180 s to start and connect the servers, plus 4x the time at 25 MB/s per node
+# (the slowest whole-experiment rate seen under load on Leonardo was about
+# 38 MB/s per node), capped at 1200 s. EXP_TIMEOUT / PROC_TIMEOUT in the
+# environment override it. A process gets 60 s less than its experiment, so it
+# is killed (and reported) before the experiment's srun is.
+exp_timeout() { # exp_timeout <MiB per node>
+    local t=$((180 + 4 * $1 * 1048576 / 25000000))
+    [ "$t" -gt 1200 ] && t=1200
+    echo "${EXP_TIMEOUT:-$t}"
+}
+
+# A job stops running experiments after MAX_CONSECUTIVE_FAILS failures in a row
+# (default 2): a systematic problem then costs two experiments, not the rest of
+# the job on every node. The remaining experiments are recorded as "aborted" and
+# run_finish returns 1, so jobs chained with afterok (campaign.sh) do not start.
+
 # run_exp config=capio engine=io_uring pairs=1 placement=local mode=seq \
 #         nfiles=64 fsize=8M chunk=256K qd=32 pos=0 rep=1 [nodes=N] [test=label]
 # Sizes accept K/M/G suffixes (powers of 2). test= labels the rows (default:
@@ -96,6 +115,11 @@ run_exp() {
     mkdir -p "$exp_log" "$exp_data/sync" "$exp_data/rows" "$exp_data/data" "$exp_data/tokens"
 
     local prefix="$RUN_ID,$exp,$test,$config,$engine,$nodes,$pairs,$placement,$mode,$nfiles,$fsize_b,$chunk_b,$qd,$pos,$rep"
+    if [ -n "$ABORTED" ]; then
+        echo "-- $exp: not run (job aborted: $ABORTED)"
+        echo "$prefix,aborted,," >>"$RUN_DIR/experiments.csv"
+        return 0
+    fi
     local skip=""
     [ "$config" = fs-tmp ] && [ "$placement" = cross ] && [ "$nodes" -gt 1 ] && skip="fs-tmp is node-local"
     [ "$config" != capio ] && [ "$mode" = conc ] && skip="conc needs CAPIO streaming"
@@ -129,15 +153,18 @@ run_exp() {
 }
 EOF
 
-    echo "-- $exp: start $(date +%T)"
+    local exp_to proc_to
+    exp_to=$(exp_timeout $((pairs * nfiles * fsize_b / 1048576)))
+    proc_to="${PROC_TIMEOUT:-$((exp_to - 60))}"
+    echo "-- $exp: start $(date +%T) (limits: experiment ${exp_to}s, process ${proc_to}s)"
     local t0=$SECONDS status=ok
     EXP="$exp" EXP_LOG="$exp_log" SYNC="$exp_data/sync" ROWS="$exp_data/rows" \
         CONFIG="$config" ENGINE="$engine" PAIRS="$pairs" PLACEMENT="$placement" MODE="$mode" \
         NFILES="$nfiles" FSIZE="$fsize_b" CHUNK="$chunk_b" QD="$qd" \
         POSFLAG="$([ "$pos" = 1 ] && echo -p)" DATA_DIR="$exp_data/data" \
         CAPIO_CFG="$cfg" CAPIO_TOK="$exp_data/tokens" CAPIO_PORT="$(capio_port)" \
-        WF="o2o${SLURM_JOB_ID}x$EXP_SEQ" \
-        timeout -s TERM "${EXP_TIMEOUT:-1200}" \
+        WF="o2o${SLURM_JOB_ID}x$EXP_SEQ" PROC_TIMEOUT="$proc_to" \
+        timeout -s TERM "$exp_to" \
         srun --overlap -N "$nodes" --ntasks-per-node=1 -c "$CPUS_PER_NODE" --cpu-bind=none \
         --kill-on-bad-exit=0 bash "$LEO_DIR/lib/node_run.sh" || status=failed
     local wall=$((SECONDS - t0))
@@ -156,6 +183,15 @@ EOF
     echo "-- $exp: $status in ${wall}s ($rows/$expected processes reported)"
     [ "$status" = ok ] || run_cleanup
     rm -rf "$exp_data/data" # benchmark data; logs and rows stay
+    if [ "$status" = ok ]; then
+        CONSECUTIVE_FAILS=0
+    else
+        CONSECUTIVE_FAILS=$((CONSECUTIVE_FAILS + 1))
+        if [ "$CONSECUTIVE_FAILS" -ge "${MAX_CONSECUTIVE_FAILS:-2}" ]; then
+            ABORTED="$CONSECUTIVE_FAILS failures in a row, last $exp"
+            echo "== ABORT: $ABORTED; the remaining experiments are not run"
+        fi
+    fi
     return 0
 }
 
@@ -179,8 +215,9 @@ exp_summary() {
 }
 
 run_finish() {
-    local ok failed skipped
+    local ok failed skipped aborted
     ok=$(grep -c ',ok,' "$RUN_DIR/experiments.csv")
+    aborted=$(grep -c ',aborted,' "$RUN_DIR/experiments.csv")
     failed=$(grep -c ',failed,' "$RUN_DIR/experiments.csv")
     skipped=$(grep -c ',skipped,' "$RUN_DIR/experiments.csv")
     if command -v python3 >/dev/null; then
@@ -188,7 +225,11 @@ run_finish() {
         cat "$RUN_DIR/summary.txt"
     fi
     echo
-    echo "== $RUN_ID: $ok ok, $failed failed, $skipped skipped  ($(date -Is))"
+    echo "== $RUN_ID: $ok ok, $failed failed, $skipped skipped, $aborted aborted  ($(date -Is))"
     echo "== results in $RUN_DIR"
     rm -rf "$DATA_ROOT"
+    if [ -n "$ABORTED" ]; then
+        echo "== job aborted: $ABORTED"
+        return 1
+    fi
 }
