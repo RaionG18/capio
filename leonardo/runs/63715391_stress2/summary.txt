@@ -1,0 +1,4 @@
+== 63715391_stress2
+test     config  engine    nodes  pairs  placement  mode  chunk  qd  pos  reps  prod_agg_MBps  cons_agg_MBps  e2e_s          e2e_MBps      verified
+stress2  capio   io_uring  2      4      cross      conc  256K   32  0    5     612.1 ± 93.9                  5.565 ± 0.145  193.0 ± 4.9   128/128 
+stress2  capio   posix     2      4      cross      conc  256K   32  0    4     660.1 ± 100.4                 5.922 ± 0.364  181.8 ± 11.3  128/128 
