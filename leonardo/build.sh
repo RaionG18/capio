@@ -4,11 +4,20 @@
 #
 #   ./leonardo/build.sh            build what is missing, rebuild CAPIO
 #   ./leonardo/build.sh --clean    remove the CAPIO build first
+#   ./leonardo/build.sh --logs     only CAPIO, with its internal logging, in
+#                                  build-leonardo-log (a Debug build: CAPIO logs
+#                                  only in Debug). Needs a normal build first
+#                                  (liburing, benchmark) and leaves it untouched.
 #
 # Leonardo runs RHEL 8.8 (kernel 4.18): no io_uring in the kernel, and its
 # <linux/io_uring.h> is too old for CAPIO's io_uring code. liburing ships a
 # current copy of that header; CAPIO is compiled against it.
 set -euo pipefail
+logs=0
+if [ "${1:-}" = "--logs" ]; then
+    logs=1
+    export CAPIO_BUILD="${CAPIO_BUILD:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/build-leonardo-log}"
+fi
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 jobs="${BUILD_JOBS:-4}" # login nodes are shared: keep it modest
@@ -34,13 +43,18 @@ cp "$LIBURING_PREFIX/include/liburing/io_uring.h" "$compat/linux/io_uring.h"
 
 # --- CAPIO ---------------------------------------------------------------------
 echo "== CAPIO ($(git -C "$CAPIO_REPO" rev-parse --short HEAD) on $(git -C "$CAPIO_REPO" rev-parse --abbrev-ref HEAD))"
+if [ "$logs" = 1 ]; then build_type=Debug capio_log=ON; else build_type=Release capio_log=OFF; fi
 cmake -S "$CAPIO_REPO" -B "$CAPIO_BUILD" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCAPIO_LOG=OFF \
+    -DCMAKE_BUILD_TYPE=$build_type \
+    -DCAPIO_LOG=$capio_log \
     -DCAPIO_BUILD_TESTS=OFF \
     -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
     -DCMAKE_CXX_FLAGS="-isystem $compat"
 cmake --build "$CAPIO_BUILD" -j"$jobs"
+if [ "$logs" = 1 ]; then
+    echo; echo "CAPIO with logging built in $CAPIO_BUILD"
+    exit 0
+fi
 
 # --- benchmark programs --------------------------------------------------------
 echo "== one_to_one, quickstart, no_io_uring"

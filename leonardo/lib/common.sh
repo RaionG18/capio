@@ -164,6 +164,7 @@ EOF
         POSFLAG="$([ "$pos" = 1 ] && echo -p)" DATA_DIR="$exp_data/data" \
         CAPIO_CFG="$cfg" CAPIO_TOK="$exp_data/tokens" CAPIO_PORT="$(capio_port)" \
         WF="o2o${SLURM_JOB_ID}x$EXP_SEQ" PROC_TIMEOUT="$proc_to" \
+        CALF_ROOT="$([ "${CAPIO_LOGS:-0}" = 1 ] && echo "$exp_data/capio_logs")" \
         timeout -s TERM "$exp_to" \
         srun --overlap -N "$nodes" --ntasks-per-node=1 -c "$CPUS_PER_NODE" --cpu-bind=none \
         --kill-on-bad-exit=0 bash "$LEO_DIR/lib/node_run.sh" || status=failed

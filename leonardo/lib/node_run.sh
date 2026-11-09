@@ -42,6 +42,7 @@ fail() { # fail <reason>: tell the others, then leave
     echo "FAIL: $1"
     echo "$host: $1" >>"$SYNC/failed"
     stop_server
+    declare -F pack_capio_logs >/dev/null && pack_capio_logs
     exit 1
 }
 
@@ -68,6 +69,18 @@ fs-tmp)
 esac
 
 # --- CAPIO server (start) ------------------------------------------------------
+# CAPIO's internal logs (only with a log build, see jobs/40_capio_logs.slurm):
+# server and clients of this node write under CALF_ROOT/node<rank>, packed into
+# the experiment's log directory when the node is done.
+if [ "$CONFIG" = capio ] && [ -n "${CALF_ROOT:-}" ]; then
+    export CALF_LOG_DIR="$CALF_ROOT/node$rank"
+    mkdir -p "$CALF_LOG_DIR"
+fi
+pack_capio_logs() {
+    [ -n "${CALF_LOG_DIR:-}" ] && [ -d "$CALF_LOG_DIR" ] || return 0
+    tar -czf "$log/capio_logs.tar.gz" -C "$CALF_ROOT" "node$rank" && rm -rf "$CALF_LOG_DIR"
+}
+
 if [ "$CONFIG" = capio ]; then
     # Another job on this node may hold the port: peers would then reach its server.
     if command -v ss >/dev/null && [ -n "$(ss -Hltn "sport = :$CAPIO_PORT")" ]; then
@@ -167,6 +180,7 @@ if [ "$CONFIG" = capio ]; then
     barrier checked 60 || true
 fi
 stop_server
+pack_capio_logs
 [ "$CONFIG" = fs-tmp ] && rm -rf "$dir"
 echo "node $rank done, status $status, $(date -Is)"
 exit "$status"
