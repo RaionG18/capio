@@ -17,10 +17,15 @@
 #   - streaming on one node and across nodes (remote reads)
 #   - 4 pairs on one node (server contention)
 set -uo pipefail
+# submit.sh already exported the measurement build's CAPIO_SERVER/CAPIO_LIB into
+# the job's environment, so set the binaries themselves, not only CAPIO_BUILD.
 export CAPIO_BUILD="${CAPIO_REPO:-$SLURM_SUBMIT_DIR}/build-leonardo-log"
+export CAPIO_SERVER="$CAPIO_BUILD/capio/server/capio_server"
+export CAPIO_LIB="$CAPIO_BUILD/capio/posix/libcapio_posix.so"
 export CAPIO_LOGS=1
 source "${CAPIO_REPO:-$SLURM_SUBMIT_DIR}/leonardo/lib/common.sh"
 [ -x "$CAPIO_SERVER" ] || { echo "no log build in $CAPIO_BUILD: run ./leonardo/build.sh --logs"; exit 1; }
+echo "CAPIO with logging: $CAPIO_SERVER"
 run_init capio_logs
 
 small=(nfiles=4 fsize=1M)
