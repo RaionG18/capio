@@ -57,3 +57,4 @@ leonardo/.deps/
 leonardo/results/
 build-leonardo/
 __pycache__/
+leonardo/package/
