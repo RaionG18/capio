@@ -51,8 +51,11 @@ run_init() {
     cat "$RUN_DIR/meta.txt"
 
     echo "$EXP_COLUMNS,status,wall_s,files_on_disk" >"$RUN_DIR/experiments.csv"
-    echo "$EXP_COLUMNS,role,pair,host,node_rank,t_start,t_end,secs,bytes,MBps,verified,rc" \
+    echo "$EXP_COLUMNS,role,pair,host,node_rank,t_start,t_end,secs,bytes,MBps,verified,rc,cpu_user_s,cpu_sys_s,maxrss_kb" \
         >"$RUN_DIR/results.csv"
+    # one row per CAPIO server and experiment (node_run.sh server_report)
+    echo "$EXP_COLUMNS,node_rank,host,cpu_user_s,cpu_sys_s,vmhwm_kb,peak_rss_kb,peak_shmem_kb,peak_devshm_kb" \
+        >"$RUN_DIR/servers.csv"
     trap run_cleanup EXIT
 }
 
@@ -172,6 +175,9 @@ EOF
     [ -f "$exp_data/sync/failed" ] && status=failed
 
     local rows=0 f
+    for f in "$exp_data"/servers/*.csv; do
+        [ -e "$f" ] && echo "$prefix,$(cat "$f")" >>"$RUN_DIR/servers.csv"
+    done
     for f in "$exp_data"/rows/*.csv; do
         [ -e "$f" ] || continue
         echo "$prefix,$(cat "$f")" >>"$RUN_DIR/results.csv"

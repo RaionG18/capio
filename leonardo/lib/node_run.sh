@@ -50,12 +50,47 @@ fail() { # fail <reason>: tell the others, then leave
 server_pid=""
 stop_server() {
     [ -z "$server_pid" ] && return
+    [ -n "$sampler_pid" ] && kill "$sampler_pid" 2>/dev/null
+    sampler_pid=""
     kill -TERM "$server_pid" 2>/dev/null
     for _ in $(seq 100); do kill -0 "$server_pid" 2>/dev/null || break; sleep 0.1; done
     kill -KILL "$server_pid" 2>/dev/null
     wait "$server_pid" 2>/dev/null
     server_pid=""
     rm -f /dev/shm/"$WF"* /dev/shm/sem."$WF"* 2>/dev/null
+}
+
+# --- CAPIO server resource use --------------------------------------------------
+# Every second: the server's CPU time, resident memory (heap: CAPIO keeps file
+# data there) and shared memory, and this workflow's /dev/shm objects. At the
+# end, one row per node in $ROWS/../servers/ (collected into servers.csv).
+sampler_pid=""
+sample_server() { # sample_server <pid> <csv>
+    local pid="$1" out="$2" tck t0 now ut st rss shm dev
+    tck=$(getconf CLK_TCK)
+    t0=$(date +%s.%N)
+    echo "t_s,cpu_s,rss_kb,shmem_kb,devshm_kb" >"$out"
+    while [ -r "/proc/$pid/stat" ]; do
+        read -r ut st < <(awk '{print $14, $15}' "/proc/$pid/stat" 2>/dev/null) || break
+        rss=$(awk '/^VmRSS:/{print $2}' "/proc/$pid/status" 2>/dev/null)
+        shm=$(awk '/^RssShmem:/{print $2}' "/proc/$pid/status" 2>/dev/null)
+        dev=$(du -ck /dev/shm/"$WF"* 2>/dev/null | tail -1 | cut -f1)
+        now=$(date +%s.%N)
+        echo "$(awk -v a="$now" -v b="$t0" 'BEGIN{printf "%.1f", a-b}'),$(awk -v u="${ut:-0}" -v s="${st:-0}" -v t="$tck" 'BEGIN{printf "%.2f", (u+s)/t}'),${rss:-0},${shm:-0},${dev:-0}" >>"$out"
+        sleep 1
+    done
+}
+server_report() { # one CSV row with the server's totals, taken before it stops
+    [ -n "$server_pid" ] && [ -r "/proc/$server_pid/stat" ] || return 0
+    local tck ut st hwm usage="$log/server_usage.csv"
+    tck=$(getconf CLK_TCK)
+    read -r ut st < <(awk '{print $14, $15}' "/proc/$server_pid/stat")
+    hwm=$(awk '/^VmHWM:/{print $2}' "/proc/$server_pid/status")
+    mkdir -p "$ROWS/../servers"
+    awk -F, -v r="$rank" -v h="$host" -v u="$ut" -v s="$st" -v t="$tck" -v hwm="$hwm" '
+        NR > 1 { if ($3 > rss) rss = $3; if ($4 > shm) shm = $4; if ($5 > dev) dev = $5 }
+        END { printf "%s,%s,%.2f,%.2f,%d,%d,%d,%d\n", r, h, u/t, s/t, hwm, rss, shm, dev }' \
+        "$usage" >"$ROWS/../servers/node$rank.csv"
 }
 
 # --- data directory -----------------------------------------------------------
@@ -119,6 +154,8 @@ if [ "$CONFIG" = capio ]; then
     done
     [ "$connected" = 1 ] || fail "CAPIO servers did not connect ($(grep -c "Connected to" "$log/server.log")/$((nnodes - 1)))"
     echo "server up and connected, $(date -Is)"
+    sample_server "$server_pid" "$log/server_usage.csv" &
+    sampler_pid=$!
 fi
 
 # --- one producer or consumer -------------------------------------------------------
@@ -131,7 +168,11 @@ run_proc() { # run_proc <producer|consumer> <pair id>
     fi
     local t0 t1 rc
     t0=$(date +%s.%N)
-    timeout -s KILL "${PROC_TIMEOUT:-900}" "${prefix[@]}" "$ONE_TO_ONE" -r "$role" -n "$NFILES" \
+    # GNU time measures the program itself (it runs before env/LD_PRELOAD): user and
+    # system CPU seconds and peak resident memory.
+    local tf="$log/${role}_g$g.time"
+    timeout -s KILL "${PROC_TIMEOUT:-900}" /usr/bin/time -o "$tf" -f "%U %S %M" \
+        "${prefix[@]}" "$ONE_TO_ONE" -r "$role" -n "$NFILES" \
         -f "$FSIZE" -c "$CHUNK" -q "$QD" $POSFLAG -e "$ENGINE" -d "$dir" -t "g${g}_" >"$out" 2>&1
     rc=$?
     t1=$(date +%s.%N)
@@ -142,7 +183,9 @@ run_proc() { # run_proc <producer|consumer> <pair id>
     mbps=$(sed -n 's/.* MBps=\([^ ]*\).*/\1/p' <<<"$metrics")
     verified=$(sed -n 's/^verified \([0-9]*\)\/.*/\1/p' "$out")
     [ "$role" = producer ] && verified=""
-    echo "$role,$g,$host,$rank,$t0,$t1,${secs:-},${bytes:-},${mbps:-},${verified:-},$rc" \
+    local cpu_u="" cpu_s="" maxrss=""
+    [ -s "$tf" ] && read -r cpu_u cpu_s maxrss < <(tail -1 "$tf")
+    echo "$role,$g,$host,$rank,$t0,$t1,${secs:-},${bytes:-},${mbps:-},${verified:-},$rc,${cpu_u:-},${cpu_s:-},${maxrss:-}" \
         >"$ROWS/${role}_g$g.csv"
     return "$rc"
 }
@@ -191,6 +234,7 @@ if [ "$CONFIG" = capio ]; then
     [ "$rank" = 0 ] && echo "$ondisk" >"$EXP_LOG/files_on_disk"
     barrier checked 60 || true
 fi
+server_report
 stop_server
 pack_capio_logs
 [ "$CONFIG" = fs-tmp ] && rm -rf "$dir"
