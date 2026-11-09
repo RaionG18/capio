@@ -31,6 +31,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from summarize import per_experiment  # noqa: E402
@@ -39,7 +40,7 @@ from summarize import per_experiment  # noqa: E402
 # categorical palette, slots 1-4; markers keep the series apart in grayscale).
 SERIES = {
     "fs-lustre": dict(label="Lustre (POSIX)", color="#2a78d6", marker="o"),
-    "fs-tmp": dict(label="Node-local disk (POSIX)", color="#eb6834", marker="s"),
+    "fs-tmp": dict(label="Node-local disk (POSIX, same node)", color="#eb6834", marker="s"),
     "capio-posix": dict(label="CAPIO, POSIX", color="#1baf7a", marker="^"),
     "capio-io_uring": dict(label="CAPIO, io_uring", color="#eda100", marker="D"),
 }
@@ -126,6 +127,10 @@ def line_plot(out, name, data, xlabel, ylabel, title, logx=True, logy=False,
         ax.set_xscale("log", base=2)
     if logy:
         ax.set_yscale("log")
+        plain = FuncFormatter(lambda v, _: f"{v:,.0f}" if v >= 10 else f"{v:g}")
+        ax.yaxis.set_major_locator(LogLocator(base=10, subs=(1, 2, 5)))
+        ax.yaxis.set_major_formatter(plain)
+        ax.yaxis.set_minor_formatter(NullFormatter())
     if xticks:
         ax.set_xticks(xticks)
         ax.set_xticklabels([str(t) for t in xticks])
@@ -177,7 +182,8 @@ def main(argv):
     # weak scaling
     weak = group(exps, is_("weak", "seq"), "nodes", cons_agg)
     line_plot(out, "weak_seq_throughput", weak, "Nodes", "Aggregate read bandwidth (MB/s)",
-              "Weak scaling: 4 pairs per node, write then read", logy=True, xticks=nodes)
+              "Weak scaling: 4 pairs per node, write then read\n"
+              "(reader on the next node; at 1 node, the same node)", logy=True, xticks=nodes)
     eff = {}
     for s, pts in weak.items():
         if 1 in pts:
@@ -185,7 +191,8 @@ def main(argv):
             eff[s] = {n: (m / n / base * 100, sd / n / base * 100, k)
                       for n, (m, sd, k) in pts.items()}
     line_plot(out, "weak_seq_efficiency", eff, "Nodes", "Weak-scaling efficiency (%)",
-              "Weak scaling efficiency: per-node bandwidth vs 1 node", xticks=nodes,
+              "Weak scaling efficiency: per-node bandwidth vs 1 node\n"
+              "(1 node reads locally: CAPIO from memory, Lustre from page cache)", xticks=nodes,
               ideal=(nodes, [100] * len(nodes)), ylim0=True)
     weak_conc = group(exps, is_("weak", "conc"), "nodes", lambda e: e.get("e2e_MBps"))
     line_plot(out, "weak_conc_throughput", weak_conc, "Nodes",
@@ -196,7 +203,8 @@ def main(argv):
     strong = group(exps, is_("strong", "seq"), "nodes", total_time)
     t1 = [pts[1][0] for pts in strong.values() if 1 in pts]
     line_plot(out, "strong_seq_time", strong, "Nodes", "Time to write and read 16 GiB (s)",
-              "Strong scaling: 32 pairs in total", logy=True, xticks=nodes)
+              "Strong scaling: 32 pairs in total (16 GiB)\n"
+              "(reader on the next node; at 1 node, the same node)", logy=True, xticks=nodes)
     speed = {}
     for s, pts in strong.items():
         if 1 in pts:
