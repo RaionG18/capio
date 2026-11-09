@@ -1,0 +1,12 @@
+== 63991233_cross_node_ib
+test           config     engine    nodes  pairs  placement  mode  chunk  qd  pos  reps  prod_agg_MBps   cons_agg_MBps   e2e_s          e2e_MBps        verified 
+cross_node_ib  capio      io_uring  2      1      cross      conc  256K   32  0    5     652.7 ± 18.2                    2.233 ± 0.105  481.8 ± 23.4    128/128  
+cross_node_ib  capio      io_uring  2      1      cross      seq   256K   32  0    5     655.5 ± 35.1    500.4 ± 26.0                                   128/128  
+cross_node_ib  capio      io_uring  2      8      cross      conc  256K   32  0    5     1249.0 ± 172.8                  8.686 ± 1.078  1000.6 ± 117.9  1024/1024
+cross_node_ib  capio      io_uring  2      8      cross      seq   256K   32  0    5     2381.5 ± 143.0  1533.1 ± 42.7                                  1024/1024
+cross_node_ib  capio      posix     2      1      cross      conc  256K   32  0    5     811.9 ± 92.0                    2.256 ± 0.345  483.9 ± 65.5    128/128  
+cross_node_ib  capio      posix     2      1      cross      seq   256K   32  0    5     816.5 ± 88.2    522.5 ± 64.5                                   128/128  
+cross_node_ib  capio      posix     2      8      cross      conc  256K   32  0    5     2171.0 ± 179.8                  8.379 ± 0.395  1026.9 ± 47.7   1024/1024
+cross_node_ib  capio      posix     2      8      cross      seq   256K   32  0    5     2270.8 ± 324.2  1621.9 ± 86.3                                  1024/1024
+cross_node_ib  fs-lustre  posix     2      1      cross      seq   256K   32  0    5     1002.0 ± 158.5  776.1 ± 252.4                                  128/128  
+cross_node_ib  fs-lustre  posix     2      8      cross      seq   256K   32  0    5     7899.0 ± 358.5  5022.6 ± 830.0                                 1024/1024
