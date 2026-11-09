@@ -1,0 +1,7 @@
+test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,reps,prod_agg_MBps,cons_agg_MBps,prod_proc_MBps,cons_proc_MBps,e2e_s,e2e_MBps,verified
+ib_check,capio,io_uring,2,1,cross,seq,64,8388608,262144,32,0,1,118.6,176.4,116.0,98.2,,,128/128
+ib_check,capio,io_uring,2,8,cross,conc,64,8388608,262144,32,0,1,177.1,,11.5,9.8,54.033,159.0,1024/1024
+ib_check,capio,io_uring,2,8,cross,seq,64,8388608,262144,32,0,1,144.1,788.4,9.6,56.0,,,1024/1024
+ib_check,capio,posix,2,1,cross,seq,64,8388608,262144,32,0,1,155.8,233.4,85.2,132.1,,,128/128
+ib_check,capio,posix,2,8,cross,conc,64,8388608,262144,32,0,1,130.8,,8.5,6.9,79.385,108.2,1024/1024
+ib_check,capio,posix,2,8,cross,seq,64,8388608,262144,32,0,1,180.6,536.2,11.5,46.9,,,1024/1024

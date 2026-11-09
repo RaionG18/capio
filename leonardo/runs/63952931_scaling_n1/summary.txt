@@ -1,0 +1,11 @@
+== 63952931_scaling_n1
+test    config     engine    nodes  pairs  placement  mode  chunk  qd  pos  reps  prod_agg_MBps   cons_agg_MBps     e2e_s          e2e_MBps       verified 
+strong  capio      io_uring  1      32     cross      seq   256K   32  0    3     1783.8 ± 17.5   466.7 ± 2.6                                     2048/2048
+strong  capio      posix     1      32     cross      seq   256K   32  0    3     1935.1 ± 27.8   485.8 ± 0.3                                     2048/2048
+strong  fs-lustre  posix     1      32     cross      seq   256K   32  0    3     11146.1 ± 98.5  41838.0 ± 1393.2                                2048/2048
+weak    capio      io_uring  1      4      cross      conc  256K   32  0    3     1148.8 ± 24.2                     1.875 ± 0.040  1145.5 ± 24.7  256/256  
+weak    capio      io_uring  1      4      cross      seq   256K   32  0    3     1336.5 ± 31.7   1798.6 ± 28.0                                   256/256  
+weak    capio      posix     1      4      cross      conc  256K   32  0    3     1674.9 ± 43.5                     1.930 ± 0.068  1113.4 ± 40.0  256/256  
+weak    capio      posix     1      4      cross      seq   256K   32  0    3     1655.1 ± 167.1  1950.6 ± 39.8                                   256/256  
+weak    fs-lustre  posix     1      4      cross      seq   256K   32  0    3     2087.0 ± 54.8   7714.3 ± 95.2                                   256/256  
+weak    fs-tmp     posix     1      4      local      seq   256K   32  0    3     2496.4 ± 18.5   8398.2 ± 77.9                                   256/256  

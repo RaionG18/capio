@@ -1,0 +1,20 @@
+== 63952928_cross_node
+test        config     engine    nodes  pairs  placement  mode  chunk  qd  pos  reps  prod_agg_MBps   cons_agg_MBps   e2e_s           e2e_MBps        verified 
+cross_node  capio      io_uring  2      1      cross      conc  256K   32  0    5     615.0 ± 71.4                    38.400 ± 2.482  28.1 ± 2.0      128/128  
+cross_node  capio      io_uring  2      1      cross      seq   256K   32  0    5     625.6 ± 51.2    27.2 ± 2.4                                      128/128  
+cross_node  capio      io_uring  2      1      local      conc  256K   32  0    5     610.5 ± 88.7                    1.799 ± 0.317   609.1 ± 88.2    128/128  
+cross_node  capio      io_uring  2      1      local      seq   256K   32  0    5     560.5 ± 128.0   1480.5 ± 289.4                                  128/128  
+cross_node  capio      io_uring  2      8      cross      conc  256K   32  0    5     2221.2 ± 146.9                  37.237 ± 0.254  230.7 ± 1.6     1024/1024
+cross_node  capio      io_uring  2      8      cross      seq   256K   32  0    5     1969.6 ± 619.3  227.9 ± 2.1                                     1024/1024
+cross_node  capio      io_uring  2      8      local      conc  256K   32  0    5     1505.0 ± 174.8                  6.119 ± 0.688   1417.9 ± 155.9  1024/1024
+cross_node  capio      io_uring  2      8      local      seq   256K   32  0    5     1944.9 ± 430.5  2594.1 ± 85.9                                   1024/1024
+cross_node  capio      posix     2      1      cross      conc  256K   32  0    5     766.7 ± 96.2                    38.161 ± 6.031  28.9 ± 5.7      128/128  
+cross_node  capio      posix     2      1      cross      seq   256K   32  0    5     712.6 ± 120.9   26.0 ± 0.2                                      128/128  
+cross_node  capio      posix     2      1      local      conc  256K   32  0    5     785.5 ± 90.0                    1.384 ± 0.181   785.2 ± 90.0    128/128  
+cross_node  capio      posix     2      1      local      seq   256K   32  0    5     778.4 ± 68.2    1819.9 ± 210.7                                  128/128  
+cross_node  capio      posix     2      8      cross      conc  256K   32  0    5     1990.2 ± 498.0                  38.945 ± 0.905  220.7 ± 5.1     1024/1024
+cross_node  capio      posix     2      8      cross      seq   256K   32  0    5     2651.9 ± 115.0  228.7 ± 2.2                                     1024/1024
+cross_node  capio      posix     2      8      local      conc  256K   32  0    5     2117.1 ± 378.7                  6.453 ± 0.869   1348.6 ± 161.9  1024/1024
+cross_node  capio      posix     2      8      local      seq   256K   32  0    5     2429.7 ± 299.2  2729.1 ± 101.0                                  1024/1024
+cross_node  fs-lustre  posix     2      1      cross      seq   256K   32  0    5     988.2 ± 153.8   613.8 ± 185.5                                   128/128  
+cross_node  fs-lustre  posix     2      8      cross      seq   256K   32  0    5     7779.2 ± 258.9  3018.6 ± 687.1                                  1024/1024
