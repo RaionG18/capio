@@ -75,9 +75,11 @@ def stats(values):
 
 
 def total_time(info):
-    """Seconds from the first producer start to the last consumer end."""
+    """Write then read: producer phase + consumer phase (first start to last end of
+    each), without the harness barrier between them, which is idle time."""
     r = info["roles"]
-    return r["consumer"]["end"] - r["producer"]["start"]
+    return ((r["producer"]["end"] - r["producer"]["start"])
+            + (r["consumer"]["end"] - r["consumer"]["start"]))
 
 
 def group(exps, select, xkey, metric):
@@ -102,7 +104,7 @@ def write_csv(path, data, xname, yname):
 
 
 def line_plot(out, name, data, xlabel, ylabel, title, logx=True, logy=False,
-              ideal=None, xticks=None, ylim0=False):
+              ideal=None, xticks=None, ylim0=False, ideal_label="Ideal"):
     """One line per series with stddev error bars and a direct label at its end."""
     if not data:
         print(f"  {name}: no data, skipped")
@@ -122,7 +124,7 @@ def line_plot(out, name, data, xlabel, ylabel, title, logx=True, logy=False,
         ends.append((ms[-1], xs[-1], style))
     if ideal is not None:
         ix, iy = ideal
-        ax.plot(ix, iy, color=MUTED, linestyle="--", linewidth=1.2, label="Ideal", zorder=2)
+        ax.plot(ix, iy, color=MUTED, linestyle="--", linewidth=1.2, label=ideal_label, zorder=2)
     if logx:
         ax.set_xscale("log", base=2)
     if logy:
