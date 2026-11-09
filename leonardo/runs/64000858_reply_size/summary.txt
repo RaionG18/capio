@@ -1,0 +1,8 @@
+== 64000858_reply_size
+test           config  engine    nodes  pairs  placement  mode  chunk  qd  pos  reps  prod_agg_MBps  cons_agg_MBps  e2e_s  e2e_MBps  verified
+reply_1024MiB  capio   io_uring  2      1      cross      seq   1M     32  0    1     786.4          692.5                           2/2     
+reply_1024MiB  capio   posix     2      1      cross      seq   1M     32  0    1     1042.5         725.0                           2/2     
+reply_256MiB   capio   io_uring  2      1      cross      seq   1M     32  0    1     796.0          702.5                           2/2     
+reply_256MiB   capio   posix     2      1      cross      seq   1M     32  0    1     670.5          268.5                           2/2     
+reply_4096MiB  capio   io_uring  2      1      cross      seq   1M     32  0    1     790.1          763.8                           2/2     
+reply_4096MiB  capio   posix     2      1      cross      seq   1M     32  0    1     1041.7         203.9                           2/2     

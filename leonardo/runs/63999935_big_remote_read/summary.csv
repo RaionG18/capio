@@ -1,0 +1,6 @@
+test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,reps,prod_agg_MBps,cons_agg_MBps,prod_proc_MBps,cons_proc_MBps,e2e_s,e2e_MBps,verified
+big_remote_read,capio,io_uring,2,4,cross,conc,64,8388608,262144,32,0,1,237.5,,50.5,26.3,21.656,198.3,512/512
+big_remote_read,capio,io_uring,2,4,cross,seq,64,8388608,262144,32,0,1,496.6,578.9,104.3,133.0,,,512/512
+big_remote_read,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,947.9,185.5,498.2,179.6,,,2/2
+big_remote_read,capio,posix,2,4,cross,conc,64,8388608,262144,32,0,1,604.7,,134.7,49.1,14.263,301.1,512/512
+big_remote_read,capio,posix,2,4,cross,seq,64,8388608,262144,32,0,1,622.4,318.9,106.7,44.7,,,512/512

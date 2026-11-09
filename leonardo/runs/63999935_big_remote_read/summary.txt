@@ -1,0 +1,7 @@
+== 63999935_big_remote_read
+test             config  engine    nodes  pairs  placement  mode  chunk  qd  pos  reps  prod_agg_MBps  cons_agg_MBps  e2e_s   e2e_MBps  verified
+big_remote_read  capio   io_uring  2      4      cross      conc  256K   32  0    1     237.5                         21.656  198.3     512/512 
+big_remote_read  capio   io_uring  2      4      cross      seq   256K   32  0    1     496.6          578.9                            512/512 
+big_remote_read  capio   posix     2      1      cross      seq   1M     32  0    1     947.9          185.5                            2/2     
+big_remote_read  capio   posix     2      4      cross      conc  256K   32  0    1     604.7                         14.263  301.1     512/512 
+big_remote_read  capio   posix     2      4      cross      seq   256K   32  0    1     622.4          318.9                            512/512 

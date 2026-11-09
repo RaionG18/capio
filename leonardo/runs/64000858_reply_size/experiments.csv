@@ -1,0 +1,7 @@
+run_id,exp,test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,rep,status,wall_s,files_on_disk
+64000858_reply_size,e001_capio_posix_n2_p1_cross_seq_c1M_q32_r1,reply_256MiB,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,ok,116,0
+64000858_reply_size,e002_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,reply_256MiB,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,ok,61,0
+64000858_reply_size,e003_capio_posix_n2_p1_cross_seq_c1M_q32_r1,reply_1024MiB,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,ok,53,0
+64000858_reply_size,e004_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,reply_1024MiB,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,ok,61,0
+64000858_reply_size,e005_capio_posix_n2_p1_cross_seq_c1M_q32_r1,reply_4096MiB,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,ok,128,0
+64000858_reply_size,e006_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,reply_4096MiB,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,ok,60,0

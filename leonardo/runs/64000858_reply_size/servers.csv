@@ -1,0 +1,13 @@
+run_id,exp,test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,rep,node_rank,host,cpu_user_s,cpu_sys_s,vmhwm_kb,peak_rss_kb,peak_shmem_kb,peak_devshm_kb
+64000858_reply_size,e001_capio_posix_n2_p1_cross_seq_c1M_q32_r1,reply_256MiB,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,0,lrdn4089,17.04,44.53,27535044,27341100,5132,2724
+64000858_reply_size,e001_capio_posix_n2_p1_cross_seq_c1M_q32_r1,reply_256MiB,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,1,lrdn4092,17.04,42.22,27796668,27063012,5136,2724
+64000858_reply_size,e002_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,reply_256MiB,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,0,lrdn4089,7.62,27.24,27797308,25704316,5136,2724
+64000858_reply_size,e002_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,reply_256MiB,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,1,lrdn4092,7.59,26.75,27534752,25555544,5132,2724
+64000858_reply_size,e003_capio_posix_n2_p1_cross_seq_c1M_q32_r1,reply_1024MiB,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,0,lrdn4089,7.29,27.31,28321232,26420440,5136,2724
+64000858_reply_size,e003_capio_posix_n2_p1_cross_seq_c1M_q32_r1,reply_1024MiB,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,1,lrdn4092,7.17,27.69,29369436,27502164,5132,2724
+64000858_reply_size,e004_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,reply_1024MiB,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,0,lrdn4089,7.75,27.57,29369848,28081264,5136,2724
+64000858_reply_size,e004_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,reply_1024MiB,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,1,lrdn4092,7.69,27.86,28321176,27059520,5132,2724
+64000858_reply_size,e005_capio_posix_n2_p1_cross_seq_c1M_q32_r1,reply_4096MiB,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,0,lrdn4089,26.27,52.25,29369768,28952120,5132,2724
+64000858_reply_size,e005_capio_posix_n2_p1_cross_seq_c1M_q32_r1,reply_4096MiB,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,1,lrdn4092,19.52,41.30,29369548,28016548,5136,2724
+64000858_reply_size,e006_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,reply_4096MiB,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,0,lrdn4089,6.93,25.79,29370164,28888628,5136,2724
+64000858_reply_size,e006_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,reply_4096MiB,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,1,lrdn4092,6.65,25.82,31466756,31145204,5132,2724
