@@ -40,16 +40,33 @@ fi
 compat="$LEO_DEPS/compat/include"
 mkdir -p "$compat/linux"
 cp "$LIBURING_PREFIX/include/liburing/io_uring.h" "$compat/linux/io_uring.h"
+# glibc 2.28 (RHEL 8) has no gettid() wrapper (added in 2.30). Only CAPIO's log
+# statements call it, so only the log build force-includes this.
+cat >"$compat/gettid_compat.h" <<'H'
+#pragma once
+#include <features.h>
+#if defined(__GLIBC__) && (__GLIBC__ < 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ < 30))
+#include <sys/syscall.h>
+#include <unistd.h>
+static inline pid_t gettid(void) { return (pid_t) syscall(SYS_gettid); }
+#endif
+H
 
 # --- CAPIO ---------------------------------------------------------------------
 echo "== CAPIO ($(git -C "$CAPIO_REPO" rev-parse --short HEAD) on $(git -C "$CAPIO_REPO" rev-parse --abbrev-ref HEAD))"
-if [ "$logs" = 1 ]; then build_type=Debug capio_log=ON; else build_type=Release capio_log=OFF; fi
+cxx_flags="-isystem $compat"
+if [ "$logs" = 1 ]; then
+    build_type=Debug capio_log=ON
+    cxx_flags="$cxx_flags -include $compat/gettid_compat.h"
+else
+    build_type=Release capio_log=OFF
+fi
 cmake -S "$CAPIO_REPO" -B "$CAPIO_BUILD" \
     -DCMAKE_BUILD_TYPE=$build_type \
     -DCAPIO_LOG=$capio_log \
     -DCAPIO_BUILD_TESTS=OFF \
     -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
-    -DCMAKE_CXX_FLAGS="-isystem $compat"
+    -DCMAKE_CXX_FLAGS="$cxx_flags"
 cmake --build "$CAPIO_BUILD" -j"$jobs"
 if [ "$logs" = 1 ]; then
     echo; echo "CAPIO with logging built in $CAPIO_BUILD"
