@@ -1,0 +1,26 @@
+== 63952927_intranode_scaling
+test               config     engine    nodes  pairs  placement  mode  chunk  qd  pos  reps  prod_agg_MBps    cons_agg_MBps    e2e_s  e2e_MBps  verified 
+intranode_scaling  capio      io_uring  1      1      local      seq   256K   32  0    3     392.7 ± 1.3      865.6 ± 1.8                       64/64    
+intranode_scaling  capio      io_uring  1      2      local      seq   256K   32  0    3     681.3 ± 13.6     1328.2 ± 18.7                     128/128  
+intranode_scaling  capio      io_uring  1      4      local      seq   256K   32  0    3     1357.3 ± 28.1    1766.5 ± 46.2                     256/256  
+intranode_scaling  capio      io_uring  1      8      local      seq   256K   32  0    3     1836.1 ± 37.9    1401.4 ± 3.8                      512/512  
+intranode_scaling  capio      io_uring  1      16     local      seq   256K   32  0    3     1821.6 ± 0.9     828.9 ± 3.2                       1024/1024
+intranode_scaling  capio      io_uring  1      32     local      seq   256K   32  0    3     1744.8 ± 27.2    452.8 ± 0.5                       2048/2048
+intranode_scaling  capio      posix     1      1      local      seq   256K   32  0    3     479.7 ± 44.0     989.6 ± 7.9                       64/64    
+intranode_scaling  capio      posix     1      2      local      seq   256K   32  0    3     986.7 ± 6.1      1610.7 ± 9.4                      128/128  
+intranode_scaling  capio      posix     1      4      local      seq   256K   32  0    3     1739.6 ± 20.7    1935.5 ± 7.5                      256/256  
+intranode_scaling  capio      posix     1      8      local      seq   256K   32  0    3     1851.1 ± 21.3    1442.4 ± 13.6                     512/512  
+intranode_scaling  capio      posix     1      16     local      seq   256K   32  0    3     1993.7 ± 21.4    832.0 ± 19.4                      1024/1024
+intranode_scaling  capio      posix     1      32     local      seq   256K   32  0    3     1896.4 ± 25.7    464.9 ± 6.3                       2048/2048
+intranode_scaling  fs-lustre  posix     1      1      local      seq   256K   32  0    3     509.0 ± 55.2     2152.3 ± 154.6                    64/64    
+intranode_scaling  fs-lustre  posix     1      2      local      seq   256K   32  0    3     1036.4 ± 33.4    4253.4 ± 254.5                    128/128  
+intranode_scaling  fs-lustre  posix     1      4      local      seq   256K   32  0    3     2094.1 ± 4.4     8055.4 ± 432.1                    256/256  
+intranode_scaling  fs-lustre  posix     1      8      local      seq   256K   32  0    3     3304.4 ± 1034.1  14646.5 ± 778.8                   512/512  
+intranode_scaling  fs-lustre  posix     1      16     local      seq   256K   32  0    3     7169.3 ± 173.0   24829.3 ± 84.0                    1024/1024
+intranode_scaling  fs-lustre  posix     1      32     local      seq   256K   32  0    3     11038.1 ± 238.9  42274.8 ± 629.3                   2048/2048
+intranode_scaling  fs-tmp     posix     1      1      local      seq   256K   32  0    3     639.9 ± 1.3      2450.6 ± 44.4                     64/64    
+intranode_scaling  fs-tmp     posix     1      2      local      seq   256K   32  0    3     1263.5 ± 0.9     4638.3 ± 370.7                    128/128  
+intranode_scaling  fs-tmp     posix     1      4      local      seq   256K   32  0    3     2515.2 ± 13.8    8389.0 ± 42.3                     256/256  
+intranode_scaling  fs-tmp     posix     1      8      local      seq   256K   32  0    3     4940.9 ± 27.0    16146.3 ± 167.3                   512/512  
+intranode_scaling  fs-tmp     posix     1      16     local      seq   256K   32  0    3     9548.7 ± 60.8    29401.6 ± 5.2                     1024/1024
+intranode_scaling  fs-tmp     posix     1      32     local      seq   256K   32  0    3     17887.9 ± 46.6   49603.8 ± 161.5                   2048/2048
