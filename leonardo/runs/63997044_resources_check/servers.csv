@@ -1,0 +1,10 @@
+run_id,exp,test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,rep,node_rank,host,cpu_user_s,cpu_sys_s,vmhwm_kb,peak_rss_kb,peak_shmem_kb,peak_devshm_kb
+63997044_resources_check,e001_capio_posix_n2_p4_cross_seq_c256K_q32_r1,resources_check,capio,posix,2,4,cross,seq,64,8388608,262144,32,0,1,0,lrdn4975,2.12,2.58,4249160,4224596,20876,10488
+63997044_resources_check,e001_capio_posix_n2_p4_cross_seq_c256K_q32_r1,resources_check,capio,posix,2,4,cross,seq,64,8388608,262144,32,0,1,1,lrdn4978,2.01,2.50,4248980,4175060,20876,10488
+63997044_resources_check,e002_capio_io_uring_n2_p4_cross_seq_c256K_q32_r1,resources_check,capio,io_uring,2,4,cross,seq,64,8388608,262144,32,0,1,0,lrdn4975,2.18,2.79,4249532,4249532,20876,10488
+63997044_resources_check,e002_capio_io_uring_n2_p4_cross_seq_c256K_q32_r1,resources_check,capio,io_uring,2,4,cross,seq,64,8388608,262144,32,0,1,1,lrdn4978,2.12,2.85,4256956,4232672,20876,10488
+63997044_resources_check,e004_capio_posix_n2_p1_cross_seq_c1M_q32_r1,big_default,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,1,lrdn4978,1.80,8.87,16784036,15586796,2732,2724
+63997044_resources_check,e005_capio_posix_n2_p1_cross_seq_c1M_q32_r1,big_prefetch1G,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,0,lrdn4975,7.70,28.55,29369768,28797416,5132,2724
+63997044_resources_check,e005_capio_posix_n2_p1_cross_seq_c1M_q32_r1,big_prefetch1G,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,1,lrdn4978,6.47,26.25,28321128,27995616,5132,2724
+63997044_resources_check,e006_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,big_prefetch1G,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,0,lrdn4975,7.87,28.11,29369852,28121924,5132,2724
+63997044_resources_check,e006_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,big_prefetch1G,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,1,lrdn4978,6.48,26.42,28321260,27094452,5132,2724

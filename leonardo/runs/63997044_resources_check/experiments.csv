@@ -1,0 +1,7 @@
+run_id,exp,test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,rep,status,wall_s,files_on_disk
+63997044_resources_check,e001_capio_posix_n2_p4_cross_seq_c256K_q32_r1,resources_check,capio,posix,2,4,cross,seq,64,8388608,262144,32,0,1,ok,8,0
+63997044_resources_check,e002_capio_io_uring_n2_p4_cross_seq_c256K_q32_r1,resources_check,capio,io_uring,2,4,cross,seq,64,8388608,262144,32,0,1,ok,9,0
+63997044_resources_check,e003_fs-lustre_posix_n2_p4_cross_seq_c256K_q32_r1,resources_check,fs-lustre,posix,2,4,cross,seq,64,8388608,262144,32,0,1,ok,4,
+63997044_resources_check,e004_capio_posix_n2_p1_cross_seq_c1M_q32_r1,big_default,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,failed,863,0
+63997044_resources_check,e005_capio_posix_n2_p1_cross_seq_c1M_q32_r1,big_prefetch1G,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,ok,52,0
+63997044_resources_check,e006_capio_io_uring_n2_p1_cross_seq_c1M_q32_r1,big_prefetch1G,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,ok,59,0

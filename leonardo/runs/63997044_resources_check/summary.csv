@@ -1,0 +1,6 @@
+test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,reps,prod_agg_MBps,cons_agg_MBps,prod_proc_MBps,cons_proc_MBps,e2e_s,e2e_MBps,verified
+big_prefetch1G,capio,io_uring,2,1,cross,seq,1,10737418240,1048576,32,0,1,793.0,712.7,407.5,361.7,,,2/2
+big_prefetch1G,capio,posix,2,1,cross,seq,1,10737418240,1048576,32,0,1,1011.2,764.5,524.4,387.4,,,2/2
+resources_check,capio,io_uring,2,4,cross,seq,64,8388608,262144,32,0,1,1725.2,1449.0,310.0,212.2,,,512/512
+resources_check,capio,posix,2,4,cross,seq,64,8388608,262144,32,0,1,1802.6,1593.6,333.9,224.4,,,512/512
+resources_check,fs-lustre,posix,2,4,cross,seq,64,8388608,262144,32,0,1,2818.5,2911.8,515.7,532.1,,,512/512
