@@ -1,0 +1,10 @@
+test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,reps,prod_agg_MBps,cons_agg_MBps,prod_proc_MBps,cons_proc_MBps,e2e_s,e2e_MBps,verified
+seek_test,capio,io_uring,1,1,local,seq,64,8388608,4096,32,0,5,116.0 ± 28.8,51.3 ± 11.2,126.7 ± 34.1,53.4 ± 12.2,,,64/64
+seek_test,capio,io_uring,1,1,local,seq,64,8388608,4096,32,1,5,257.3 ± 51.6,622.9 ± 54.9,322.5 ± 83.4,1194.4 ± 166.1,,,64/64
+seek_test,capio,io_uring,1,1,local,seq,64,8388608,65536,32,0,5,251.4 ± 30.5,393.2 ± 48.3,313.2 ± 50.4,561.2 ± 97.2,,,64/64
+seek_test,capio,io_uring,1,1,local,seq,64,8388608,65536,32,1,5,300.3 ± 63.0,662.1 ± 24.6,392.6 ± 104.4,1300.6 ± 106.3,,,64/64
+seek_test,capio,io_uring,1,1,local,seq,64,8388608,262144,32,0,5,234.1 ± 54.0,610.4 ± 31.8,288.2 ± 81.6,1109.7 ± 139.6,,,64/64
+seek_test,capio,io_uring,1,1,local,seq,64,8388608,262144,32,1,5,281.7 ± 55.3,653.2 ± 47.9,356.3 ± 84.8,1262.3 ± 130.5,,,64/64
+seek_test,capio,posix,1,1,local,seq,64,8388608,4096,32,0,5,291.5 ± 124.6,677.4 ± 56.3,435.3 ± 94.2,1380.2 ± 249.2,,,64/64
+seek_test,capio,posix,1,1,local,seq,64,8388608,65536,32,0,5,356.6 ± 53.9,695.2 ± 54.9,482.8 ± 91.0,1446.8 ± 198.0,,,64/64
+seek_test,capio,posix,1,1,local,seq,64,8388608,262144,32,0,5,369.7 ± 39.1,717.4 ± 78.5,506.9 ± 72.8,1530.3 ± 176.8,,,64/64

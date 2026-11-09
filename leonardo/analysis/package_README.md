@@ -11,7 +11,9 @@ partition), November 2026. Fork `RaionG18/capio`, branch `test`; every run's
 |---|---|
 | `plots/` | Figures as PNG and PDF, with the CSV of the plotted numbers (mean and stddev over repetitions) |
 | `campaign/` | The measurement runs, whole nodes (112 cores each) |
-| `traces/` | CAPIO's internal traces (Perfetto format) of 10 representative cases |
+| `traces/` | CAPIO's internal traces (Perfetto format) of 10 representative cases, and `roundtrips.txt` (client-server requests counted in them) |
+| `rq2_seek_test/` | io_uring with and without seeks, at 4/64/256 KiB (shared slice, its own baselines) |
+| `laptop/` | Native io_uring baselines on a kernel that has io_uring: NOP latency (level 1) and the four configurations (level 2) |
 | `functional_tests/` | Shared-slice runs that validated the setup before the campaign (smoke, stress, preflight, InfiniBand check) |
 | `superseded/` | The first cross-node run, measured over the wrong network (see Caveats); kept for the record, not for comparison |
 | `slurm/` | Slurm output of every job |
@@ -94,6 +96,70 @@ nodes CAPIO reads 5,500–5,600 MB/s in aggregate, close to Lustre's 5,800. From
 2 nodes on, CAPIO keeps 35–44% of its 1-node per-node bandwidth, Lustre 9–22%.
 Streaming end to end grows from about 1,100 MB/s (1 node) to 2,560 (POSIX) and
 2,850 (io_uring) MB/s (8 nodes).
+
+## RQ2: where the io_uring cost comes from
+
+**Traces** (`traces/roundtrips.txt`): requests from a CAPIO client to its server
+per MiB of data. POSIX interception goes through CAPIO's client cache (256 KiB
+lines): 4 requests per MiB whatever the chunk size. The io_uring path bypasses
+it, and every request first seeks through the server (`capio_lseek`):
+
+| Chunk | Role | CAPIO POSIX | CAPIO io_uring | io_uring requests per I/O call |
+|---|---|---|---|---|
+| 4 KiB | write | 4 | 768 | 2 seeks + 1 write |
+| 4 KiB | read | 4 | 1,023 | 3 seeks + 1 read |
+| 256 KiB | both | 4 | 12 | same pattern |
+
+**Seek test** (`plots/seek_test`, Leonardo, 5 reps): with `off = -1` (no seek)
+io_uring reads reach 91–95% of POSIX at every chunk size (4 KiB: 51 → 623 MB/s,
+POSIX 677). Writes improve (4 KiB: 116 → 257) but stay at 76–88% of POSIX: each
+write still goes to the server alone instead of through the client cache.
+Two changes would close the gap: a positioned read/write request in CAPIO's
+protocol (no seek), and routing io_uring writes through the client cache.
+
+**Ring overhead** (`laptop/results_2026-11-09.csv`, ns per NOP, median of 21,
+client pinned to one core):
+
+| Configuration | Batch 1 | Batch 32 |
+|---|---|---|
+| Native io_uring | 789 | 83 |
+| CAPIO, hidden kernel ring behind it | 1,429 | 120 |
+| CAPIO, no kernel ring (as on Leonardo) | 539 | 30 |
+
+CAPIO's ring itself is cheap (without a kernel ring it completes NOPs without
+entering the kernel); the cost in the data experiments is the server round
+trips, not the ring.
+
+**Native io_uring** (`laptop/f6_summary_campaign_c*.csv`; laptop, NVMe disk,
+kernel 7.0, 64 files × 8 MiB, 10 reps, MB/s write / read):
+
+| Chunk | FS POSIX | FS io_uring | CAPIO POSIX | CAPIO io_uring |
+|---|---|---|---|---|
+| 256 KiB | 771 / 4,419 | 715 / 2,266 | 879 / 3,033 | 537 / 2,118 |
+| 4 KiB | 559 / 2,766 | 488 / 2,833 | 775 / 2,259 | 159 / 89 |
+
+Against native io_uring on the same disk, CAPIO-uring writes at 0.75× and reads
+at 0.93× with 256 KiB chunks, and at 0.33× / 0.03× with 4 KiB chunks (the seeks
+above). The laptop is a different machine: compare ratios, not absolute values,
+with Leonardo.
+
+## RQ3: streaming makespan
+
+Makespan = time of the whole producer → consumer step (streaming: first producer
+start to last consumer end; write then read: producer phase + consumer phase,
+without the harness barrier between them). `plots/makespan_cases`,
+`plots/makespan_weak`, `plots/streaming_gain`.
+
+- Streaming keeps its gain with io_uring: makespan(write then read) /
+  makespan(streaming) is 1.15–1.49 with io_uring and 1.03–1.26 with POSIX
+  (weak scaling, 1–8 nodes). io_uring gains more because its slower writes leave
+  more time to overlap. The bound for a pipeline that only does I/O is 2.
+- The gain shrinks with more pairs and nodes (2 nodes, 8 pairs: 1.06–1.09),
+  where the CAPIO server and the network are the shared bottleneck.
+- Absolute makespan: Lustre (write then read) is faster in most cases; with one
+  pair across two nodes, CAPIO streaming (2.2 s) beats Lustre (2.7 ± 0.9 s).
+- The benchmark only does I/O. Streaming pays off most when producers compute
+  between writes, which this workload does not model.
 
 ## Caveats
 
