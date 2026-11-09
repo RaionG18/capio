@@ -28,6 +28,9 @@ inline void serve_remote_read(const std::filesystem::path &path, const std::stri
     if (prefetch_data_size != 0 && nbytes > prefetch_data_size) {
         nbytes = prefetch_data_size;
     }
+    // The backend cannot send more in one message (MTCL: 4 GiB); without this cap a
+    // larger reply threw in send_file and the server died, leaving the reader waiting.
+    nbytes = std::min(nbytes, backend->max_file_transfer_size());
     const off64_t file_size = c_file.getStoredSize();
 
     serve_remote_read_request(tid, fd, count, nbytes, file_size, complete, is_getdents, dest,
