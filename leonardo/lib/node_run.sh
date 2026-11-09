@@ -81,6 +81,18 @@ pack_capio_logs() {
     tar -czf "$log/capio_logs.tar.gz" -C "$CALF_ROOT" "node$rank" && rm -rf "$CALF_LOG_DIR"
 }
 
+# Server-to-server traffic over InfiniBand: the hostname resolves to the 1 Gb/s
+# management network (brmgt); <host>-interconnect-1 is the node's ib0 address.
+if [ "$CONFIG" = capio ]; then
+    ib_host="$host${LEO_IB_SUFFIX--interconnect-1.leonardo.local}"
+    if getent hosts "$ib_host" >/dev/null; then
+        export CAPIO_MTCL_ADVERTISE_HOST="$ib_host"
+        echo "CAPIO servers connect over $ib_host ($(getent hosts "$ib_host" | cut -d' ' -f1))"
+    else
+        echo "WARNING: $ib_host does not resolve; CAPIO servers use the hostname's network"
+    fi
+fi
+
 if [ "$CONFIG" = capio ]; then
     # Another job on this node may hold the port: peers would then reach its server.
     if command -v ss >/dev/null && [ -n "$(ss -Hltn "sport = :$CAPIO_PORT")" ]; then
