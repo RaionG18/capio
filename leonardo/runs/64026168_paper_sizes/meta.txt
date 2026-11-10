@@ -1,0 +1,23 @@
+run_id:      64026168_paper_sizes
+test:        paper_sizes
+date:        2026-11-10T01:25:43+01:00
+commit:      f9913b480325ece1d3d4c2ba988eb382c51915b7 (test)
+dirty:       0 modified files
+nodes:       2 (lrdn4710 lrdn4713)
+cpus/node:   8
+partition:   dcgp_usr_prod  account: ict26_mhpc
+kernel:      4.18.0-477.27.1.el8_8.x86_64
+io_uring:    kernel has none (ENOSYS); CAPIO-uring runs without a kernel ring
+capio:       /leonardo/home/userexternal/jgordill/capio/build-leonardo/capio/server/capio_server
+benchmark:   /leonardo/home/userexternal/jgordill/capio/leonardo/.deps/bin/one_to_one
+data root:   /leonardo_scratch/large/userexternal/jgordill/capio_runs/64026168_paper_sizes (Lustre)
+modules:
+  Currently Loaded Modulefiles:
+   1) profile/base(default)        6) nghttp2/1.57.0-634bffh <aL>  
+   2) zlib-ng/2.1.6-jkgunjc <aL>   7) curl/8.7.1(default) <aL>     
+   3) zstd/1.5.6-uq5yyux <aL>      8) gmake/4.4.1-phqmvks <aL>     
+   4) binutils/2.42 <aL>           9) ncurses/6.5-svfl57u <aL>     
+   5) gcc/12.2.0                  10) cmake/3.27.9(default)        
+  
+  Key:
+  (symbolic-version)  <module-tag>  <aL>=auto-loaded  

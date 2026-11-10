@@ -1,0 +1,5 @@
+test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,reps,prod_agg_MBps,cons_agg_MBps,prod_proc_MBps,cons_proc_MBps,e2e_s,e2e_MBps,verified
+paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,0,2,105.2 ± 2.9,18.9 ± 0.3,53.7 ± 1.7,9.5 ± 0.2,,,200/200
+paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,1,3,756.2 ± 48.0,98.4 ± 28.9,390.7 ± 21.3,49.5 ± 14.6,,,200/200
+paper_sizes_1k,capio,posix,2,1,cross,seq,100,104857600,1024,32,0,3,685.2 ± 87.8,87.8 ± 5.2,384.8 ± 37.0,44.2 ± 2.6,,,200/200
+paper_sizes_1k,fs-lustre,posix,2,1,cross,seq,100,104857600,1024,32,0,3,548.2 ± 4.8,701.6 ± 165.4,279.6 ± 2.0,396.7 ± 31.8,,,200/200

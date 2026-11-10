@@ -1,0 +1,12 @@
+run_id,exp,test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,rep,status,wall_s,files_on_disk
+64026169_paper_sizes_1k,e001_fs-lustre_posix_n2_p1_cross_seq_c1K_q32_r1,paper_sizes_1k,fs-lustre,posix,2,1,cross,seq,100,104857600,1024,32,0,1,ok,70,
+64026169_paper_sizes_1k,e002_capio_posix_n2_p1_cross_seq_c1K_q32_r1,paper_sizes_1k,capio,posix,2,1,cross,seq,100,104857600,1024,32,0,1,ok,278,0
+64026169_paper_sizes_1k,e003_capio_io_uring_n2_p1_cross_seq_c1K_q32_pos_r1,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,1,1,ok,305,0
+64026169_paper_sizes_1k,e004_capio_io_uring_n2_p1_cross_seq_c1K_q32_r1,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,0,1,ok,1328,0
+64026169_paper_sizes_1k,e005_fs-lustre_posix_n2_p1_cross_seq_c1K_q32_r2,paper_sizes_1k,fs-lustre,posix,2,1,cross,seq,100,104857600,1024,32,0,2,ok,83,
+64026169_paper_sizes_1k,e006_capio_posix_n2_p1_cross_seq_c1K_q32_r2,paper_sizes_1k,capio,posix,2,1,cross,seq,100,104857600,1024,32,0,2,ok,261,0
+64026169_paper_sizes_1k,e007_capio_io_uring_n2_p1_cross_seq_c1K_q32_pos_r2,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,1,2,ok,281,0
+64026169_paper_sizes_1k,e008_capio_io_uring_n2_p1_cross_seq_c1K_q32_r2,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,0,2,ok,1306,0
+64026169_paper_sizes_1k,e009_fs-lustre_posix_n2_p1_cross_seq_c1K_q32_r3,paper_sizes_1k,fs-lustre,posix,2,1,cross,seq,100,104857600,1024,32,0,3,ok,69,
+64026169_paper_sizes_1k,e010_capio_posix_n2_p1_cross_seq_c1K_q32_r3,paper_sizes_1k,capio,posix,2,1,cross,seq,100,104857600,1024,32,0,3,ok,294,0
+64026169_paper_sizes_1k,e011_capio_io_uring_n2_p1_cross_seq_c1K_q32_pos_r3,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,1,3,ok,193,0

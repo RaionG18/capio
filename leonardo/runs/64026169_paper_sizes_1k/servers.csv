@@ -1,0 +1,17 @@
+run_id,exp,test,config,engine,nodes,pairs,placement,mode,nfiles,fsize,chunk,qd,pos,rep,node_rank,host,cpu_user_s,cpu_sys_s,vmhwm_kb,peak_rss_kb,peak_shmem_kb,peak_devshm_kb
+64026169_paper_sizes_1k,e002_capio_posix_n2_p1_cross_seq_c1K_q32_r1,paper_sizes_1k,capio,posix,2,1,cross,seq,100,104857600,1024,32,0,1,0,lrdn3979,74.68,106.13,20594028,20594000,5324,2724
+64026169_paper_sizes_1k,e002_capio_posix_n2_p1_cross_seq_c1K_q32_r1,paper_sizes_1k,capio,posix,2,1,cross,seq,100,104857600,1024,32,0,1,1,lrdn3980,30.51,50.10,20593924,20491732,5324,2724
+64026169_paper_sizes_1k,e003_capio_io_uring_n2_p1_cross_seq_c1K_q32_pos_r1,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,1,1,0,lrdn3979,55.74,84.16,20594164,20594136,5324,2724
+64026169_paper_sizes_1k,e003_capio_io_uring_n2_p1_cross_seq_c1K_q32_pos_r1,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,1,1,1,lrdn3980,62.43,93.78,20593640,20491448,5324,2724
+64026169_paper_sizes_1k,e004_capio_io_uring_n2_p1_cross_seq_c1K_q32_r1,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,0,1,0,lrdn3979,782.95,282.18,20591336,20489144,2804,2724
+64026169_paper_sizes_1k,e004_capio_io_uring_n2_p1_cross_seq_c1K_q32_r1,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,0,1,1,lrdn3980,777.80,272.99,20591372,20591344,2804,2724
+64026169_paper_sizes_1k,e006_capio_posix_n2_p1_cross_seq_c1K_q32_r2,paper_sizes_1k,capio,posix,2,1,cross,seq,100,104857600,1024,32,0,2,0,lrdn3979,44.29,68.61,20594156,20491964,5324,2724
+64026169_paper_sizes_1k,e006_capio_posix_n2_p1_cross_seq_c1K_q32_r2,paper_sizes_1k,capio,posix,2,1,cross,seq,100,104857600,1024,32,0,2,1,lrdn3980,57.38,83.19,20593816,20593788,5324,2724
+64026169_paper_sizes_1k,e007_capio_io_uring_n2_p1_cross_seq_c1K_q32_pos_r2,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,1,2,0,lrdn3979,73.69,103.49,20594252,20492060,5324,2724
+64026169_paper_sizes_1k,e007_capio_io_uring_n2_p1_cross_seq_c1K_q32_pos_r2,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,1,2,1,lrdn3980,36.35,58.26,20593824,20491632,5324,2724
+64026169_paper_sizes_1k,e008_capio_io_uring_n2_p1_cross_seq_c1K_q32_r2,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,0,2,0,lrdn3979,777.60,267.36,20591276,20591248,2804,2724
+64026169_paper_sizes_1k,e008_capio_io_uring_n2_p1_cross_seq_c1K_q32_r2,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,0,2,1,lrdn3980,767.46,266.78,20591268,20489076,2804,2724
+64026169_paper_sizes_1k,e010_capio_posix_n2_p1_cross_seq_c1K_q32_r3,paper_sizes_1k,capio,posix,2,1,cross,seq,100,104857600,1024,32,0,3,0,lrdn3979,41.36,66.42,20594156,20594128,5324,2724
+64026169_paper_sizes_1k,e010_capio_posix_n2_p1_cross_seq_c1K_q32_r3,paper_sizes_1k,capio,posix,2,1,cross,seq,100,104857600,1024,32,0,3,1,lrdn3980,72.50,101.53,20593948,20491756,5324,2724
+64026169_paper_sizes_1k,e011_capio_io_uring_n2_p1_cross_seq_c1K_q32_pos_r3,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,1,3,0,lrdn3979,39.39,64.91,20594232,20594176,5324,2724
+64026169_paper_sizes_1k,e011_capio_io_uring_n2_p1_cross_seq_c1K_q32_pos_r3,paper_sizes_1k,capio,io_uring,2,1,cross,seq,100,104857600,1024,32,1,3,1,lrdn3980,30.54,51.80,20593912,20491720,5324,2724
