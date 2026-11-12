@@ -33,6 +33,13 @@ def stats(v):
     return statistics.mean(v), statistics.stdev(v) if len(v) > 1 else 0.0, len(v)
 
 
+def stats_median(v):
+    """Median with (down, up) distances to the minimum and maximum: the runs
+    used shared slices and the CAPIO times are bimodal, so the mean misleads."""
+    m = statistics.median(v)
+    return m, (m - min(v), max(v) - m), len(v)
+
+
 def draw(out, name, data, xlabel, ylabel, title, logy=False, styles=None):
     fig, ax = plt.subplots(figsize=(6.8, 4.8))
     for key, st in (styles or STYLE).items():
@@ -40,7 +47,10 @@ def draw(out, name, data, xlabel, ylabel, title, logy=False, styles=None):
         if not pts:
             continue
         xs = sorted(pts)
-        ax.errorbar(xs, [pts[x][0] for x in xs], yerr=[pts[x][1] for x in xs],
+        err = [pts[x][1] for x in xs]
+        if err and isinstance(err[0], tuple):  # (down, up) pairs -> asymmetric whiskers
+            err = [[e[0] for e in err], [e[1] for e in err]]
+        ax.errorbar(xs, [pts[x][0] for x in xs], yerr=err,
                     color=st["color"], marker=st["marker"], linestyle=st["ls"],
                     markeredgecolor=ps.SURFACE, markeredgewidth=1.5, capsize=3, elinewidth=1,
                     label=st["label"], zorder=3)
@@ -69,7 +79,11 @@ def draw(out, name, data, xlabel, ylabel, title, logy=False, styles=None):
         w.writerow(["series", "mode", "x", "mean", "sd", "reps"])
         for (s, m), pts in sorted(data.items()):
             for x, (mu, sd, k) in sorted(pts.items()):
-                w.writerow([s, m, x, f"{mu:.4f}", f"{sd:.4f}", k])
+                if isinstance(sd, tuple):  # median: the "sd" column holds min..max
+                    sd = f"{mu - sd[0]:.4f}..{mu + sd[1]:.4f}"
+                else:
+                    sd = f"{sd:.4f}"
+                w.writerow([s, m, x, f"{mu:.4f}", sd, k])
     print(f"  {name}: " + ", ".join(f"{s}/{m} {len(p)}" for (s, m), p in sorted(data.items())))
 
 
@@ -97,9 +111,10 @@ def main(argv):
          "Small files, 1 pair across 2 nodes: time per file\n"
          "(flat = constant cost per file)")
     draw(out, "smallfiles_pairs",
-         {k: {x: stats(v) for x, v in d.items()} for k, d in rate.items()},
+         {k: {x: stats_median(v) for x, v in d.items()} for k, d in rate.items()},
          "Pairs per node (250 files of 4 KiB each)", "Files per second per node",
-         "Small files across 2 nodes: throughput vs pairs per node", logy=True)
+         "Small files across 2 nodes: throughput vs pairs per node\n"
+         "(median of 3 runs, whiskers min..max)", logy=True)
     # Server CPU per file: one point per server; x = files that server holds.
     cpu = defaultdict(lambda: defaultdict(list))
     with open(Path(argv[1]) / "servers.csv") as f:
@@ -115,7 +130,7 @@ def main(argv):
     draw(out, "smallfiles_server_cpu",
          {k: {x: stats(v) for x, v in d.items()} for k, d in cpu.items()},
          "Files held by the server (4 KiB each)", "Server CPU per file (ms)",
-         "Small files: CAPIO server CPU time per file\n"
+         "Small files: CAPIO server CPU time per file (mean and stddev over servers)\n"
          "(flat = constant cost per file; rising = cost grows with the file count)",
          logy=True, styles=cpu_style)
     return 0

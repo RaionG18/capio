@@ -21,7 +21,7 @@ from summarize import per_experiment  # noqa: E402
 plt = ps.plt
 BARS = [  # (engine, pos) -> style; color = engine as in every figure, texture = no seek
     (("posix", "0"), dict(label="CAPIO POSIX", color="#1baf7a", hatch=None)),
-    (("io_uring", "0"), dict(label="CAPIO io_uring, positioned (2 seeks per request)",
+    (("io_uring", "0"), dict(label="CAPIO io_uring, positioned (with seeks)",
                              color="#eda100", hatch=None)),
     (("io_uring", "1"), dict(label="CAPIO io_uring, off = -1 (no seek)", color="#eda100",
                              hatch="///")),
@@ -64,7 +64,7 @@ def main(argv):
         ax.set_title(title, loc="left", fontsize=11)
         ax.grid(axis="x", visible=False)
     axes[0].set_ylabel("Aggregate bandwidth (MB/s)")
-    fig.suptitle("Without seeks, io_uring reads match POSIX; writes keep a gap",
+    fig.suptitle("io_uring with and without seeks, against POSIX (mean of 5 runs, whiskers: stddev)",
                  x=0.02, ha="left", fontsize=12)
     h, l = axes[0].get_legend_handles_labels()
     fig.legend(h, l, loc="lower center", ncol=2, fontsize=8.5, bbox_to_anchor=(0.5, 0.0))
