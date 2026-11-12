@@ -8,11 +8,14 @@
 #include <shared_mutex>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "calf/StlLogger.h"
 
+#include "common/constants.hpp"
 #include "common/queue.hpp"
+#include "file_buffer.hpp"
 
 /**
  * @class CapioFile
@@ -28,9 +31,12 @@ class CapioFile {
                         const std::pair<off64_t, off64_t> &rhs) const;
     };
 
-    char *_buf        = nullptr; ///< Raw pointer to memory buffer for file content
-    off64_t _buf_size = 0;       ///< Allocated size of _buf
-    int _fd           = -1;      ///< File descriptor for permanent/mmap storage
+    using HeapBuffer   = FileBuffer<HeapStorageInterface>;
+    using MappedBuffer = FileBuffer<MappedStorageInterface>;
+
+    /// Backing storage: plain heap for in-memory files, mmap of a file for permanent ones.
+    std::variant<HeapBuffer, MappedBuffer> _buffer;
+    off64_t _requested_size = 0; ///< Init size to allocate on createBuffer()
 
     // TODO: check if it is possible to move from int to unsigned int
     std::atomic<int> _n_close            = 0; ///< Current count of close() operations
@@ -65,13 +71,6 @@ class CapioFile {
      * @return Logical size based on the furthest sector end.
      */
     off64_t _getStoredSize() const;
-
-    /**
-     * @brief Reallocates the buffer and copies existing sectors to their correct offsets.
-     * @param new_p The pointer to the newly allocated memory.
-     * @param old_p The pointer to the old memory buffer.
-     */
-    void _memcopyCapioFile(char *new_p, const char *old_p) const;
 
   public:
     /** @brief Default constructor. Initializes an empty file. */
@@ -196,6 +195,18 @@ class CapioFile {
      */
     void readFromQueue(SPSCQueue &queue, size_t offset, long int num_bytes) const;
 
+    /**
+     * @brief Copies data from the buffer of another file, or of this file, into this file buffer.
+     * The buffer must already hold @p dst_offset + @p num_bytes bytes, and the caller records the
+     * new data with insertSector(), as for readFromQueue().
+     * @param src Source file, which may be this file.
+     * @param src_offset Source offset in @p src.
+     * @param dst_offset Destination offset in this file.
+     * @param num_bytes Number of bytes to copy.
+     */
+    void copyFromFile(const CapioFile &src, off64_t src_offset, off64_t dst_offset,
+                      off64_t num_bytes) const;
+
     /** @brief Explicitly sets the total file size. */
     void setRealFileSize(off64_t size);
 
@@ -207,6 +218,12 @@ class CapioFile {
      * @param count the number to increase the internal counter
      */
     void incrementDirectoryFileCount(int count = 1);
+
+    /**
+     * @brief Removes the entry called @p name from this directory's listing.
+     * @return true if the directory listed it.
+     */
+    bool removeDirectoryEntry(const std::string &name);
 
     /** @return Pointer to the raw memory buffer. */
     char *getBuffer() const;
@@ -238,7 +255,7 @@ class CapioFile {
     /**
      * @brief Finds the end of the sector containing the offset.
      * @param offset Position to check.
-     * @return End offset of the sector, or -1 if in a hole.
+     * @return End offset of the sector, or CAPIO_SECTOR_NOT_FOUND if in a hole.
      */
     [[nodiscard]] off64_t getSectorEnd(off64_t offset) const;
 

@@ -7,6 +7,7 @@
 #include "remote/backend.hpp"
 #include "remote/requests.hpp"
 #include "storage/manager.hpp"
+#include "utils/runtime_configuration.hpp"
 
 extern StorageManager *storage_manager;
 
@@ -19,18 +20,11 @@ inline void serve_remote_read(const std::filesystem::path &path, const std::stri
               path.c_str(), dest.c_str(), tid, fd, count, offset, complete ? "true" : "false",
               is_getdents ? "true" : "false");
 
-    // Send all the rest of the file not only the number of bytes requested
-    // Useful for caching
-    CapioFile &c_file          = storage_manager->get(path);
-    long int nbytes            = std::max<off64_t>(0, c_file.getStoredSize() - offset);
-    off64_t prefetch_data_size = get_prefetch_data_size();
-
-    if (prefetch_data_size != 0 && nbytes > prefetch_data_size) {
-        nbytes = prefetch_data_size;
-    }
+    CapioFile &c_file = storage_manager->get(path);
     // The backend cannot send more in one message (MTCL: 4 GiB); without this cap a
     // larger reply threw in send_file and the server died, leaving the reader waiting.
-    nbytes = std::min(nbytes, backend->max_file_transfer_size());
+    const long int nbytes = std::min<long int>(remote_reply_size(c_file, offset),
+                                               backend->max_file_transfer_size());
     const off64_t file_size = c_file.getStoredSize();
 
     serve_remote_read_request(tid, fd, count, nbytes, file_size, complete, is_getdents, dest,

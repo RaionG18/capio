@@ -8,12 +8,15 @@
 #include "common/queue.hpp"
 #include "utils/capiocl_adapter.hpp"
 #include "utils/common.hpp"
+#include "utils/runtime_configuration.hpp"
 
 ClientManager::ClientDataBuffers::ClientDataBuffers(const std::string &clientToServerName,
                                                     const std::string &serverToClientName,
                                                     const std::string &wf_name)
-    : ClientToServer(clientToServerName, get_cache_lines(), get_cache_line_size(), wf_name),
-      ServerToClient(serverToClientName, get_cache_lines(), get_cache_line_size(), wf_name) {}
+    : ClientToServer(clientToServerName, RuntimeConfiguration::get().getCacheLines(),
+                     RuntimeConfiguration::get().getCacheLineSize(), wf_name),
+      ServerToClient(serverToClientName, RuntimeConfiguration::get().getCacheLines(),
+                     RuntimeConfiguration::get().getCacheLineSize(), wf_name) {}
 
 ClientManager::ClientManager()
     : requests{SHM_COMM_CHAN_NAME, CAPIO_REQ_BUFF_CNT, CAPIO_REQ_MAX_SIZE,
@@ -140,13 +143,13 @@ bool ClientManager::isProducer(const pid_t tid, const std::filesystem::path &pat
 
     if (const auto itm = files_created_by_producer.find(tid);
         itm != files_created_by_producer.end()) {
-        is_producer |= std::find(itm->second.begin(), itm->second.end(), path) != itm->second.end();
+        is_producer |= itm->second.count(path.native()) != 0;
     }
 
     const std::string &app_name = this->getAppName(tid);
     if (const auto itm = files_created_by_app_name.find(app_name);
         itm != files_created_by_app_name.end()) {
-        is_producer |= std::find(itm->second.begin(), itm->second.end(), path) != itm->second.end();
+        is_producer |= itm->second.count(path.native()) != 0;
     }
 
     return is_producer;

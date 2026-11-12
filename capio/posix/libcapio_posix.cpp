@@ -53,6 +53,9 @@ static constexpr long CAPIO_NR_SYSCALLS = 1 + std::max({
 #ifdef SYS_chdir
                                                   SYS_chdir,
 #endif
+#ifdef SYS_fchdir
+                                                  SYS_fchdir,
+#endif
 #ifdef SYS_chmod
                                                   SYS_chmod,
 #endif
@@ -61,6 +64,9 @@ static constexpr long CAPIO_NR_SYSCALLS = 1 + std::max({
 #endif
 #ifdef SYS_close
                                                   SYS_close,
+#endif
+#ifdef SYS_copy_file_range
+                                                  SYS_copy_file_range,
 #endif
 #ifdef SYS_creat
                                                   SYS_creat,
@@ -167,6 +173,12 @@ static constexpr long CAPIO_NR_SYSCALLS = 1 + std::max({
 #ifdef SYS_rmdir
                                                   SYS_rmdir,
 #endif
+#ifdef SYS_sendfile
+                                                  SYS_sendfile,
+#endif
+#ifdef SYS_splice
+                                                  SYS_splice,
+#endif
 #ifdef SYS_stat
                                                   SYS_stat,
 #endif
@@ -200,26 +212,32 @@ static constexpr std::array<CPHandler_t, CAPIO_NR_SYSCALLS> build_syscall_table(
 #ifdef SYS_chdir
     _syscallTable[SYS_chdir] = chdir_handler;
 #endif
+#ifdef SYS_fchdir
+    _syscallTable[SYS_fchdir] = fchdir_handler;
+#endif
 #ifdef SYS_chmod
-    _syscallTable[SYS_chmod] = fchmod_handler;
+    _syscallTable[SYS_chmod] = chmod_handler;
 #endif
 #ifdef SYS_fchmod
     _syscallTable[SYS_fchmod] = fchmod_handler;
 #endif
 #ifdef SYS_fchmodat
-    _syscallTable[SYS_fchmodat] = fchmod_handler;
+    _syscallTable[SYS_fchmodat] = fchmodat_handler;
 #endif
 #ifdef SYS_chown
-    _syscallTable[SYS_chown] = fchown_handler;
+    _syscallTable[SYS_chown] = chown_handler;
 #endif
 #ifdef SYS_fchown
     _syscallTable[SYS_fchown] = fchown_handler;
 #endif
 #ifdef SYS_fchownat
-    _syscallTable[SYS_fchownat] = fchown_handler;
+    _syscallTable[SYS_fchownat] = fchownat_handler;
 #endif
 #ifdef SYS_close
     _syscallTable[SYS_close] = close_handler;
+#endif
+#ifdef SYS_copy_file_range
+    _syscallTable[SYS_copy_file_range] = copy_file_range_handler;
 #endif
 #ifdef SYS_creat
     _syscallTable[SYS_creat] = creat_handler;
@@ -331,6 +349,12 @@ static constexpr std::array<CPHandler_t, CAPIO_NR_SYSCALLS> build_syscall_table(
 #endif
 #ifdef SYS_rmdir
     _syscallTable[SYS_rmdir] = rmdir_handler;
+#endif
+#ifdef SYS_sendfile
+    _syscallTable[SYS_sendfile] = sendfile_handler;
+#endif
+#ifdef SYS_splice
+    _syscallTable[SYS_splice] = splice_handler;
 #endif
 #ifdef SYS_stat
     _syscallTable[SYS_stat] = stat_handler;

@@ -5,9 +5,9 @@
 #include "capiocl.hpp"
 #include "capiocl/engine.h"
 #include "remote/backend/none.hpp"
+#include "remote/home_node_service.hpp"
 #include "storage/manager.hpp"
 #include "utils/capiocl_adapter.hpp"
-#include "utils/location.hpp"
 
 extern StorageManager *storage_manager;
 extern capiocl::engine::Engine *capio_cl_engine;
@@ -61,8 +61,12 @@ TEST_F(StorageManagerTestEnvironment, testInitDirectory) {
 
     storage_manager->add("myDirectory", true, 0);
 
-    const auto &dir = storage_manager->get("myDirectory");
+    auto &dir = storage_manager->get("myDirectory");
 
+    // Directory buffers are allocated lazily by createBuffer(), so nothing is
+    // mapped yet: getBufSize() reflects the real allocation, i.e. 0.
+    EXPECT_EQ(dir.getBufSize(), 0);
+    dir.createBuffer("", true);
     EXPECT_EQ(dir.getBufSize(), CAPIO_DEFAULT_DIR_INITIAL_SIZE);
 
     storage_manager->updateDirectory(1, "myDirectory");
@@ -72,16 +76,9 @@ TEST_F(StorageManagerTestEnvironment, testInitDirectory) {
 }
 
 TEST_F(StorageManagerTestEnvironment, testAddDirectoryFailure) {
-    char *old_capio_dir = getenv("CAPIO_DIR");
-    setenv("CAPIO_DIR", "/", 1);
-    open_files_location();
-
     storage_manager->add("/tmp", true, 0);
     EXPECT_EQ(storage_manager->addDirectory(1, "/tmp/newDirectoryFail"), 0);
     EXPECT_EQ(storage_manager->addDirectory(1, "/tmp/newDirectoryFail"), 1);
-    if (old_capio_dir != nullptr) {
-        setenv("CAPIO_DIR", old_capio_dir, 1);
-    }
 }
 
 TEST_F(StorageManagerTestEnvironment, testRemameFile) {

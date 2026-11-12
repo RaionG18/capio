@@ -1,21 +1,76 @@
 #ifndef CAPIO_POSIX_UTILS_FILESYSTEM_HPP
 #define CAPIO_POSIX_UTILS_FILESYSTEM_HPP
 
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
+#include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "calf/SyscallLogger.h"
 #include "common/env.hpp"
-#include "common/filesystem.hpp"
 #include "common/syscall.hpp"
 
 #include "types.hpp"
+
+constexpr std::array CAPIO_DIR_FORBIDDEN_PATHS = {std::string_view{"/proc/"},
+                                                  std::string_view{"/sys/"}};
+
+inline bool in_dir(const std::string &path, const std::string &glob) {
+    const size_t res = path.find('/', glob.length() - 1);
+    return res != std::string::npos;
+}
+
+inline bool is_directory(int dirfd) {
+    START_LOG(capio_syscall(SYS_gettid), "call(dirfd=%d)", dirfd);
+
+    struct stat path_stat{};
+    int tmp = fstat(dirfd, &path_stat);
+    if (tmp != 0) {
+        LOG("Error at is_directory(dirfd=%d) -> %d: %d (%s)", dirfd, tmp, errno,
+            std::strerror(errno));
+        return -1;
+    }
+    return S_ISDIR(path_stat.st_mode) == 1;
+}
+
+inline bool is_prefix(const std::filesystem::path &path_1, const std::filesystem::path &path_2) {
+    const auto relpath = path_2.lexically_relative(path_1);
+    return !relpath.empty() && relpath.native().rfind("..", 0) != 0;
+}
+
+inline bool is_forbidden_path(const std::string_view &path) {
+    return std::any_of(CAPIO_DIR_FORBIDDEN_PATHS.cbegin(), CAPIO_DIR_FORBIDDEN_PATHS.cend(),
+                       [&path](const std::string_view &forbidden_path) {
+                           return path.rfind(forbidden_path, 0) == 0;
+                       });
+}
+
+inline bool is_capio_dir(const std::filesystem::path &path_to_check) {
+    START_LOG(capio_syscall(SYS_gettid), "call(path_to_check=%s)", path_to_check.c_str());
+
+    const auto res = get_capio_dir().compare(path_to_check) == 0;
+    LOG("is_capio_dir: %s", res ? "yes" : "no");
+    return res;
+}
+
+inline bool is_capio_path(const std::filesystem::path &path_to_check) {
+    START_LOG(capio_syscall(SYS_gettid), "call(path_to_check=%s)", path_to_check.c_str());
+
+    // check if path_to_check begins with CAPIO_DIR
+    const auto res = is_prefix(get_capio_dir(), path_to_check);
+    LOG("is_capio_path: %s", res ? "yes" : "no");
+    return res;
+}
 
 CPFileDescriptors_t *capio_files_descriptors;
 CPFilesPaths_t *capio_files_paths;
@@ -62,36 +117,43 @@ inline void add_capio_fd(long tid, const std::string &path, int fd, off64_t offs
 }
 
 /**
- * Compute the absolute path for @pathname
- * @param pathname
+ * Compute the absolute path for @path.  The form in which CAPIO registers a path: "d/.", "d/" and
+ * "d/x/.." all name the directory that mkdir registered as "d", as realpath would return for a path
+ * on disk.
+ * @param path
  * @return
  */
+inline std::filesystem::path capio_normal_path(const std::filesystem::path &path) {
+    auto normal = path.lexically_normal().native();
+    while (normal.size() > 1 && normal.back() == '/') {
+        normal.pop_back();
+    }
+    return {normal};
+}
+
 std::filesystem::path capio_posix_realpath(const std::filesystem::path &pathname) {
     START_LOG(syscall_no_intercept(SYS_gettid), "call(path=%s)", pathname.c_str());
-    char *posix_real_path = capio_realpath((char *) pathname.c_str(), nullptr);
-
-    // if capio_realpath fails, then it should be a capio_file
-    if (posix_real_path == nullptr) {
-        LOG("path is null due to errno='%s'", strerror(errno));
-
-        if (pathname.is_absolute()) {
-            LOG("Path=%s is already absolute", pathname.c_str());
-            return {pathname};
-        } else {
-            std::filesystem::path new_path = (*current_dir / pathname).lexically_normal();
-            if (is_capio_path(new_path)) {
-                LOG("Computed absolute path = %s", new_path.c_str());
-                return new_path;
-            } else {
-                LOG("file %s is not a posix file, nor a capio file!", pathname.c_str());
-                return {};
-            }
-        }
+    // Relative paths start from CAPIO's working directory, which differs from the kernel's after
+    // a chdir into a CAPIO directory. CAPIO paths have no symlinks, so they are resolved
+    // lexically; the kernel resolves the others.
+    // TODO: support symlinks: a path that reaches the CAPIO directory through one, or through
+    //  ".." after one, is not recognised as a CAPIO path.
+    const std::filesystem::path absolute =
+        capio_normal_path(pathname.is_absolute() ? pathname : *current_dir / pathname);
+    if (is_capio_path(absolute)) {
+        LOG("Computed CAPIO path = %s", absolute.c_str());
+        return absolute;
     }
 
-    // if not, then check for realpath through libc implementation
-    LOG("Computed realpath = %s", posix_real_path);
-    return {posix_real_path};
+    const std::unique_ptr<char, decltype(&free)> real_path(
+        capio_realpath(absolute.c_str(), nullptr), &free);
+    if (real_path == nullptr) {
+        LOG("realpath of %s failed: %s", absolute.c_str(), strerror(errno));
+        // An absolute path is returned as it is, a relative one that does not resolve is not.
+        return pathname.is_absolute() ? absolute : std::filesystem::path{};
+    }
+    LOG("Computed realpath = %s", real_path.get());
+    return {real_path.get()};
 }
 
 /**
@@ -101,7 +163,7 @@ std::filesystem::path capio_posix_realpath(const std::filesystem::path &pathname
  * @return
  */
 inline std::filesystem::path capio_absolute(const std::filesystem::path &path) {
-    return path.is_absolute() ? path : capio_posix_realpath(path);
+    return path.is_absolute() ? capio_normal_path(path) : capio_posix_realpath(path);
 }
 
 /**
@@ -185,7 +247,7 @@ inline bool get_capio_fd_cloexec(int fd) { return std::get<3>(files->at(fd)); }
  * @param fd
  * @return the active flags
  */
-inline bool get_capio_fd_flags(int fd) { return std::get<2>(files->at(fd)); }
+inline int get_capio_fd_flags(int fd) { return std::get<2>(files->at(fd)); }
 
 /**
  * Get the path of a file descriptor

@@ -31,9 +31,10 @@ inline int capio_openat(int dirfd, const std::string_view &pathname, int flags, 
                 return CAPIO_POSIX_SYSCALL_REQUEST_SKIP;
             }
 
-            path = (dir_path / path).lexically_normal();
+            path = dir_path / path;
         }
     }
+    path = capio_normal_path(path);
 
     if (is_capio_path(path)) {
         int fd =
@@ -61,6 +62,7 @@ inline int capio_openat(int dirfd, const std::string_view &pathname, int flags, 
             LOG("!excl && !create");
             off64_t return_code = open_request(fd, path, tid);
             if (return_code == 1) {
+                syscall_no_intercept(SYS_close, fd);
                 errno = ENOENT;
                 return CAPIO_POSIX_SYSCALL_ERRNO;
             }

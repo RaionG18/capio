@@ -41,8 +41,13 @@ cmake-build-*
 
 #logfies and capio files
 *.log
-files_location*.txt
 capio_logs
+
+#Doxygen generated documentation
+doxy/html
+doxy/latex
+doxy/doxygen-awesome-css-*
+doxy/theme
 
 # Other
 debug
@@ -51,6 +56,9 @@ build
 .capio_tokens
 
 cmake_test_discovery*.json
+.devcontainer
+.DS_Store
+*.alive_connection
 
 # Leonardo test harness: build products and raw results (finished runs go to leonardo/runs/)
 leonardo/.deps/
